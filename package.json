@@ -20,7 +20,6 @@
     "scripts",
     "src",
     "tests",
-    "website",
     ".env.example",
     "docker-compose.yml",
     "Dockerfile",

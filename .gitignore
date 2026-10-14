@@ -1,7 +1,5 @@
 node_modules/
 dist/
-!website/dist/
-!website/dist/**
 .env
 data/
 .runtime/
