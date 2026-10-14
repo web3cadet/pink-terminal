@@ -68,13 +68,13 @@ describe("ladder strategy flow", () => {
       });
       expect(prepareTrigger).toHaveBeenCalledOnce();
       const draft = prepareTrigger.mock.calls[0]?.[2];
-      expect(draft).toMatchObject({ kind: "LADDER", levels: 10, childKind: "LIMIT_GTC", postOnly: true });
+      expect(draft).toMatchObject({ kind: "LADDER", levels: 10, childKind: "LIMIT_GTC", postOnly: false });
       expect(draft?.childLimitPrice).toBeUndefined();
       expect(database.getWizard(1, 1)).toBeNull();
       const confirmation = calls.find(item => ["sendMessage", "editMessageText"].includes(item.method) && String(item.payload.text).includes("Strategy is ready"));
       expect(confirmation).toBeDefined();
       expect(String(confirmation?.payload.text)).not.toContain("Child:");
-      expect(String(confirmation?.payload.text)).toContain("10 resting limit orders");
+      expect(String(confirmation?.payload.text)).toContain("10 limit orders");
       const rows = (confirmation?.payload.reply_markup as { inline_keyboard: Array<Array<{ text: string; callback_data?: string }>> }).inline_keyboard;
       expect(rows.flat().some(button => button.text === "✅ Confirm & activate" && button.callback_data?.startsWith("confirm:t:"))).toBe(true);
       expect(gateway.createTrigger).not.toHaveBeenCalled();

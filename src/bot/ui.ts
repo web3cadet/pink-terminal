@@ -37,7 +37,7 @@ export function orderOptionsKeyboard(draft: Partial<OrderDraft>): InlineKeyboard
     .text(draft.attachedRisk?.stopLossPrice ? "✅ Stop-loss" : "+ Stop-loss", "ordrisk:sl").row()
     .text(draft.attachedRisk?.trailingBps || draft.attachedRisk?.trailingDistance ? "✅ Trailing stop" : "+ Trailing stop", "ordrisk:trail").row();
   if (draft.kind === "MARKET_IOC") keyboard.text("⚙ Maximum slippage", "ordrisk:slippage").row();
-  keyboard.text("✅ Review & confirm", "ordpreview").row().text("‹ Trading panel", "ticket:refresh").row().text("✕ Discard draft", "cancel-flow");
+  keyboard.text("Continue to confirmation", "ordpreview").row().text("✎ Change amount", "order:edit:size").row().text("✕ Cancel order", "cancel-flow");
   return keyboard;
 }
 
@@ -71,7 +71,7 @@ export function orderKindKeyboard(): InlineKeyboard {
     .text("⏳ Limit · until time (GTD)", "ordkind:LIMIT_GTD").row()
     .text("↯ Limit · fill available (IOC)", "ordkind:LIMIT_IOC").row()
     .text("◆ Limit · all or nothing (FOK)", "ordkind:LIMIT_FOK").row()
-    .text("✕ Discard draft", "cancel-flow");
+    .text("✕ Cancel order", "cancel-flow");
 }
 
 export function formatOrderDraft(draft: Partial<OrderDraft>): string {
@@ -104,7 +104,7 @@ export function formatTriggerDraft(draft: Partial<TriggerDraft>): string {
     : draft.kind === "TWAP" ? "TWAP · timed execution"
     : draft.kind === "LADDER" ? "Ladder · price levels" : "Strategy";
   const execution = draft.kind === "LADDER"
-    ? `${draft.levels ?? "—"} resting limit orders across the selected range; each remains open until filled or cancelled.`
+    ? `${draft.levels ?? "—"} limit orders across the selected range. Matching prices can fill immediately; other orders stay open until filled or cancelled.`
     : draft.childKind === "LIMIT_GTC"
       ? `Limit order at ${draft.childLimitPrice ?? "—"} ${quoteAsset}; remains open until filled or cancelled.`
       : draft.childKind === "MARKET_IOC"

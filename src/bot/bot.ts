@@ -63,6 +63,7 @@ export function createTelegramBot(deps: {
       ].join("\n");
       const keyboard = new InlineKeyboard()
         .text(shorten(`✅ Confirm ${side} · ${spend}`, 58), `confirm:o:${prepared.id}`).row()
+        .text("⚙ Optional settings", `ordedit:${prepared.id}`).row()
         .text("✕ Cancel order", "home").row()
         .url("Open pair on Polyester ↗", pairUrl(pair.symbol));
 
@@ -81,7 +82,7 @@ export function createTelegramBot(deps: {
         "",
         `⚠️ ${escapeHtml(String(state.data.inputError))}`,
         "",
-        "No order was sent. Change the amount or cancel this draft."
+        "No order was sent. Change the amount or cancel the order."
       ].join("\n"), {
         parse_mode: "HTML",
         reply_markup: new InlineKeyboard().text("✎ Change amount", "order:edit:size").row().text("✕ Cancel order", "cancel-flow")
@@ -313,7 +314,7 @@ export function createTelegramBot(deps: {
     await ctx.answerCallbackQuery();
     const pair = requirePair((await gateway.getCatalog()).pairs, Number(ctx.match[1]));
     saveFlow(ctx, database, { flow: "order", step: "side", data: { symbolId: pair.symbolId, symbol: pair.symbol } });
-    await editOrReply(ctx, `${heading("New order · direction")}\n${pairLink(pair.symbol)}\n\n<b>What do you want to do?</b>`, new InlineKeyboard().text(`🟢 Buy · ${pair.baseAsset}`, "ordside:BUY").text(`🔴 Sell · ${pair.baseAsset}`, "ordside:SELL").row().text("✕ Discard draft", "cancel-flow"));
+    await editOrReply(ctx, `${heading("New order · direction")}\n${pairLink(pair.symbol)}\n\n<b>What do you want to do?</b>`, new InlineKeyboard().text(`🟢 Buy · ${pair.baseAsset}`, "ordside:BUY").text(`🔴 Sell · ${pair.baseAsset}`, "ordside:SELL").row().text("✕ Cancel order", "cancel-flow"));
   });
   bot.callbackQuery(/^orderpairside:(\d+):(BUY|SELL)$/, async (ctx) => {
     await ctx.answerCallbackQuery();
@@ -338,7 +339,7 @@ export function createTelegramBot(deps: {
       await editOrReply(ctx, `${heading("New order · amount")}\n${pairLink(pair.symbol)} · 🟢 Buy\n\n<b>How do you want to define the purchase?</b>\n\n<b>Buy amount</b> — set how much ${escapeHtml(pair.baseAsset)} to receive.\n<b>Spend up to</b> — set the maximum ${escapeHtml(pair.quoteAsset)} to spend.`, new InlineKeyboard()
         .text(`Buy amount · ${pair.baseAsset}`, "ordsize:base").row()
         .text(`Spend up to · ${pair.quoteAsset}`, "ordsize:quote").row()
-        .text("✕ Discard draft", "cancel-flow"));
+        .text("✕ Cancel order", "cancel-flow"));
     } else {
       state.data.sizingMode = "base"; state.step = "size"; saveFlow(ctx, database, state);
       await requestInput(ctx, state);
@@ -379,6 +380,18 @@ export function createTelegramBot(deps: {
     state.data.postOnly = !Boolean(state.data.postOnly); saveFlow(ctx, database, state);
     await showOrderOptions(ctx, state);
   });
+  bot.callbackQuery(/^ordedit:([0-9a-f-]+)$/, async ctx => {
+    await ctx.answerCallbackQuery();
+    const ids = requireIds(ctx);
+    const intent = database.getIntent(ctx.match[1]!);
+    if (!intent || intent.chatId !== ids.chatId || intent.userId !== ids.userId || intent.operation !== "order"
+      || intent.expiresAt <= Date.now() || !database.transitionIntent(intent.id, ["previewed"], "superseded")) {
+      throw new Error("This confirmation is no longer active. Start a new order.");
+    }
+    const state: WizardState = { flow: "order", step: "options", data: { ...intent.payload } };
+    saveFlow(ctx, database, state);
+    await showOrderOptions(ctx, state);
+  });
   bot.callbackQuery("ordoptions", async (ctx) => { await ctx.answerCallbackQuery(); await showOrderOptions(ctx, requireFlow(ctx, database, "order")); });
   bot.callbackQuery("ordpreview", async (ctx) => {
     await ctx.answerCallbackQuery({ text: "Checking order…" });
@@ -412,7 +425,7 @@ export function createTelegramBot(deps: {
     const pairMap = new Map(catalog.pairs.map((pair) => [pair.symbolId, pair.symbol]));
     const lines = visible.map((order, index) => [
       `${index + 1}. ${pairMap.has(order.symbolId) ? pairLink(pairMap.get(order.symbolId)!) : `#${order.symbolId}`} · ${order.side.includes("BUY") ? "🟢" : "🔴"} ${escapeHtml(order.side)}`,
-      `<b>${escapeHtml(orderStatusLabel(order.status))}</b>`,
+      `<b>${escapeHtml(orderStatusLabel(order.status, order.raw.terminalReason))}</b>`,
       `Filled  <b>${numberText(order.cumulativeQty ?? "0")}</b> / ${numberText(order.totalQty ?? order.qty)}`,
       `Price  ${numberText(order.price ?? "Market")}`,
       `ID <code>${escapeHtml(shorten(order.orderId, 16))}</code>`
@@ -455,7 +468,8 @@ export function createTelegramBot(deps: {
     await editOrReply(ctx, [
       heading("Order details"), pair ? pairLink(pair.symbol) : `#${order.symbolId}`,
       "",
-      `Status: <b>${escapeHtml(orderStatusLabel(order.status))}</b>`,
+      `Status: <b>${escapeHtml(orderStatusLabel(order.status, order.raw.terminalReason))}</b>`,
+      order.raw.terminalReason ? `Reason: ${escapeHtml(String(order.raw.terminalReason).replaceAll("_", " "))}` : null,
       `Action: <b>${escapeHtml(order.side.includes("BUY") ? "Buy" : order.side.includes("SELL") ? "Sell" : order.side)}</b>`,
       `Execution: <b>${escapeHtml(orderExecutionLabel(order.orderType, order.timeInForce))}</b>`,
       `Price: <code>${escapeHtml(order.price ?? "market")}</code>`,
@@ -518,18 +532,47 @@ export function createTelegramBot(deps: {
     }
   });
 
-  bot.callbackQuery("triggers:list", async (ctx) => {
+  bot.callbackQuery(/^triggers:(list|history)(?::(\d+))?$/, async (ctx) => {
     await ctx.answerCallbackQuery({ text: "Loading strategies…" });
     const [catalog, triggers] = await Promise.all([gateway.getCatalog(), gateway.listTriggers()]);
     const pairMap = new Map(catalog.pairs.map((pair) => [pair.symbolId, pair.symbol]));
-    const lines = triggers.slice(0, 12).map((trigger, index) => `<b>${index + 1}. ${escapeHtml(trigger.type.replaceAll("_", " "))}</b>\n${pairMap.has(trigger.symbolId) ? pairLink(pairMap.get(trigger.symbolId)!) : `#${trigger.symbolId}`}\nStatus  <b>${escapeHtml(trigger.status)}</b>\nID  <code>${escapeHtml(shorten(trigger.triggerId, 16))}</code>`);
+    const mode = ctx.match[1]!;
+    const filtered = triggers.filter(t => mode === "list" ? !/COMPLETED|CANCELED|CANCELLED|FAILED|EXPIRED/.test(t.status) : /COMPLETED|CANCELED|CANCELLED|FAILED|EXPIRED/.test(t.status));
+    const page = Math.min(Number(ctx.match[2] ?? 0), Math.max(0, Math.ceil(filtered.length / 6) - 1));
+    const visible = filtered.slice(page * 6, page * 6 + 6);
+    const lines = visible.map((trigger, index) => `<b>${index + 1}. ${escapeHtml(trigger.type.replaceAll("_", " "))}</b>\n${pairMap.has(trigger.symbolId) ? pairLink(pairMap.get(trigger.symbolId)!) : `#${trigger.symbolId}`}\nStatus: <b>${escapeHtml(trigger.status.replace(/^STATUS_/, ""))}</b>`);
     const keyboard = new InlineKeyboard();
     if (config.tradingMode !== "read_only") keyboard.text("＋ Create strategy", "trigger:new").row();
-    if (config.tradingMode !== "read_only") for (const trigger of triggers.slice(0, 5)) {
-      keyboard.text("Pause strategy", `tp:${trigger.symbolId}:${trigger.triggerId}`).text("Resume strategy", `tr:${trigger.symbolId}:${trigger.triggerId}`).row().text("Cancel strategy", `tc:${trigger.symbolId}:${trigger.triggerId}`).row();
-    }
+    visible.forEach((trigger, index) => keyboard.text(`View ${index + 1}`, `td:${trigger.triggerId}`).row());
+    if (page > 0) keyboard.text("‹ Previous", `triggers:${mode}:${page - 1}`);
+    if ((page + 1) * 6 < filtered.length) keyboard.text("Next ›", `triggers:${mode}:${page + 1}`);
+    keyboard.row().text(mode === "list" ? "Strategy history" : "Active strategies", mode === "list" ? "triggers:history" : "triggers:list").row();
     keyboard.text("↻ Refresh strategies", "triggers:list").row().text("‹ Overview", "home");
     await editOrReply(ctx, `${terminalHeading("Strategies")}\n\n${lines.length ? lines.join("\n\n") : "<b>No active strategies</b>\nStop-loss, take-profit, trailing stops, TWAP and ladder strategies appear here."}`, keyboard);
+  });
+  bot.callbackQuery(/^td:(.+)$/, async ctx => {
+    await ctx.answerCallbackQuery();
+    const trigger = (await gateway.listTriggers()).find(t => t.triggerId === ctx.match[1]);
+    if (!trigger) throw new Error("Strategy not found. Refresh the list.");
+    const children = (await gateway.listOrderHistory()).filter(order => {
+      const origin = order.raw.origin as Record<string, unknown> | undefined;
+      return origin && String(origin.triggerId) === String(trigger.raw.triggerId);
+    });
+    const keyboard = new InlineKeyboard();
+    const terminal = /COMPLETED|CANCELED|CANCELLED|FAILED|EXPIRED/.test(trigger.status);
+    if (!terminal && config.tradingMode !== "read_only") {
+      keyboard.text(trigger.status.includes("PAUSED") ? "Resume" : "Pause", `${trigger.status.includes("PAUSED") ? "tr" : "tp"}:${trigger.symbolId}:${trigger.triggerId}`)
+        .text("Cancel", `tc:${trigger.symbolId}:${trigger.triggerId}`).row();
+    }
+    keyboard.text("↻ Refresh", `td:${trigger.triggerId}`).row().text("‹ Strategies", "triggers:list");
+    await editOrReply(ctx, [terminalHeading("Strategy status"),
+      `Type: ${escapeHtml(trigger.type)}`, `Status: <b>${escapeHtml(trigger.status.replace(/^STATUS_/, ""))}</b>`,
+      `Child orders: ${children.length}`, `Filled: ${children.filter(o => o.status.includes("FILLED") && !o.status.includes("PARTIAL")).length}`,
+      `Open: ${children.filter(o => isOrderOpen(o.status)).length}`, `Rejected: ${children.filter(o => o.status.includes("REJECT")).length}`,
+      ...children.slice(0, 6).map(o => `• ${escapeHtml(o.orderId)}: ${escapeHtml(orderStatusLabel(o.status, o.raw.terminalReason))}`),
+      "", "Completed means the strategy finished scheduling orders — not that every order filled.",
+      !terminal && !children.length ? "No child orders visible yet. The strategy may be waiting for its condition or API processing; this is not a confirmed fill." : "See Order history for execution details."
+    ].join("\n"), keyboard);
   });
   bot.callbackQuery("trigger:new", async (ctx) => {
     if (config.tradingMode === "read_only") {
@@ -627,7 +670,7 @@ export function createTelegramBot(deps: {
     if (!state) return;
     const text = ctx.message.text.trim();
     if (state.flow === "order" && ctx.message.reply_to_message && state.data.inputPromptId && ctx.message.reply_to_message.message_id !== state.data.inputPromptId) {
-      await ctx.reply("That input belongs to an older draft. Use Quantity / Price on the current panel."); return;
+      await ctx.reply("That reply belongs to an older order. Use the current amount or price prompt."); return;
     }
     if (state.flow === "order" && ["size", "price", "expiry"].includes(state.step)) {
       const inputStep = state.step;
@@ -665,7 +708,10 @@ export function createTelegramBot(deps: {
       }
       if (["size", "price", "expiry"].includes(state.step)) await requestInput(ctx, state);
     }
-    else if (state.flow === "order") await handleOrderText(ctx, state, text, database);
+    else if (state.flow === "order") {
+      await handleOrderText(ctx, state, text, database);
+      if (state.step === "options") await prepareAndShowOrderConfirmation(ctx, state, true);
+    }
     else if (state.flow === "trigger") {
       const ready = await handleTriggerText(ctx, state, text, database);
       if (ready) await prepareAndShowTriggerConfirmation(ctx, state);
@@ -835,7 +881,9 @@ function isOrderOpen(status: string): boolean {
   return normalized.includes("open") || normalized.includes("working") || normalized.includes("partial") || normalized.includes("accepted");
 }
 
-function orderStatusLabel(status: string): string {
+function orderStatusLabel(status: string, reason?: unknown): string {
+  if (String(reason).includes("GTD_EXPIRED")) return "Expired";
+  if (String(reason).includes("POST_ONLY_CROSS")) return "Rejected · post-only price crosses the book";
   const value = status.replace(/^ORDER_STATUS_/, "").toUpperCase();
   if (value.includes("PARTIAL")) return "Partially filled";
   if (value.includes("FILLED")) return "Filled";
@@ -891,7 +939,7 @@ async function handleOrderText(ctx: Context & { message: { text: string }; chat:
       delete risk.stopLossPrice; delete risk.trailingDistance;
     }
     if (state.step === "risk_slippage") state.data.maxSlippageBps = assertInteger(text, 1, 10_000);
-    state.data.attachedRisk = risk; state.step = "options"; db.saveWizard(ctx.chat.id, ctx.from.id, state); await showOrderOptions(ctx, state); return;
+    state.data.attachedRisk = risk; state.step = "options"; db.saveWizard(ctx.chat.id, ctx.from.id, state); return;
   }
   await ctx.reply("Use the buttons in the current wizard or /cancel.");
 }
@@ -938,7 +986,7 @@ async function handleTriggerText(ctx: Context & { message: { text: string }; cha
   }
   if (state.step === "tr_price_min") { assertDecimal(text); state.data.priceMin = text; state.step = "tr_price_max"; db.saveWizard(ctx.chat.id, ctx.from.id, state); await ctx.reply("Send ladder maximum price:"); return false; }
   if (state.step === "tr_price_max") { assertDecimal(text); state.data.priceMax = text; state.step = "tr_levels"; db.saveWizard(ctx.chat.id, ctx.from.id, state); await ctx.reply("Send number of price levels (2–100):"); return false; }
-  if (state.step === "tr_levels") { state.data.levels = assertInteger(text, 2, 100); state.data.childKind = "LIMIT_GTC"; state.data.postOnly = true; state.step = "ready"; db.saveWizard(ctx.chat.id, ctx.from.id, state); return true; }
+  if (state.step === "tr_levels") { state.data.levels = assertInteger(text, 2, 100); state.data.childKind = "LIMIT_GTC"; state.data.postOnly = false; state.step = "ready"; db.saveWizard(ctx.chat.id, ctx.from.id, state); return true; }
   if (state.step === "tr_child_price") { assertDecimal(text); state.data.childLimitPrice = text; state.step = "ready"; db.saveWizard(ctx.chat.id, ctx.from.id, state); return true; }
   await ctx.reply("Use the buttons in the current wizard or /cancel.");
   return false;
@@ -962,7 +1010,7 @@ async function showOrderKinds(ctx: Context, symbol: string, side?: OrderSide): P
 
 async function showOrderOptions(ctx: Context, state: WizardState): Promise<void> {
   const draft = state.data as unknown as Partial<OrderDraft>;
-  await editOrReply(ctx, `${heading("Risk & review")}\n\n${formatOrderDraft(draft)}\n\n<b>Protection</b>\nAdd take-profit, stop-loss or trailing protection.\n\n<i>Preview checks the draft before confirmation.</i>`, orderOptionsKeyboard(draft));
+  await editOrReply(ctx, `${heading("Optional settings")}\n\n${formatOrderDraft(draft)}\n\nAdd take-profit, stop-loss or trailing protection if needed.\nChanging settings does not send an order.`, orderOptionsKeyboard(draft));
 }
 
 async function editOrReply(ctx: Context, text: string, keyboard: InlineKeyboard): Promise<void> {
@@ -976,10 +1024,10 @@ function requireIds(ctx: Context): { chatId: number; userId: number } {
 }
 
 function saveFlow(ctx: Context, db: AppDatabase, state: WizardState): void { const ids = requireIds(ctx); db.saveWizard(ids.chatId, ids.userId, state); }
-function clearFlow(ctx: Context, db: AppDatabase): void { const ids = requireIds(ctx); db.clearWizard(ids.chatId, ids.userId); }
+function clearFlow(ctx: Context, db: AppDatabase): void { const ids = requireIds(ctx); db.clearWizard(ids.chatId, ids.userId); db.invalidateConfirmations(ids.chatId, ids.userId); }
 function requireFlow(ctx: Context, db: AppDatabase, flow: "order" | "trigger" | "cancel_all"): WizardState {
   const ids = requireIds(ctx); const state = db.getWizard(ids.chatId, ids.userId);
-  if (!state || state.flow !== flow) throw new Error("Wizard expired. Start again from the menu.");
+  if (!state || state.flow !== flow) throw new Error("This input panel is no longer active. Use the latest confirmation or start a new order.");
   return state;
 }
 function requirePair(pairs: PairConfig[], symbolId: number): PairConfig { const pair = pairs.find((item) => item.symbolId === symbolId); if (!pair) throw new Error("Unknown trading pair"); return pair; }

@@ -219,11 +219,11 @@ export class PolyesterGateway implements ExchangeGateway {
     return Object.keys(row).length ? this.parseOrder(row) : null;
   }
 
-  async getOrderDetails(orderId: string): Promise<OrderDetails | null> {
+  async getOrderDetails(orderId: string, pageToken = ""): Promise<OrderDetails | null> {
     await this.getCatalog();
     const raw = await this.transport.call<Record<string, unknown>>(PATHS.getOrder, this.scope({
       orderId: decodeBase58Uint64(orderId), includeAttachedRisk: true, includeAttachedRiskState: true,
-      includeExecutionHistory: true, limit: 100, pageToken: ""
+      includeExecutionHistory: true, limit: 100, pageToken
     }), { authenticated: true, retryRead: true });
     const row = asRecord(raw.order);
     if (Object.keys(row).length === 0) return null;
@@ -250,10 +250,19 @@ export class PolyesterGateway implements ExchangeGateway {
   }
 
   async listTriggers(symbolId?: number): Promise<TriggerSummary[]> {
-    const raw = await this.transport.call<Record<string, unknown>>(PATHS.listTriggers, this.scope({
-      symbolId: symbolId ?? 0, status: [], limit: 100, pageToken: ""
-    }), { authenticated: true, retryRead: true });
-    return asArray(raw.triggers).map((item): TriggerSummary => {
+    const rows: unknown[] = [];
+    let pageToken = "";
+    const seen = new Set<string>();
+    do {
+      const raw = await this.transport.call<Record<string, unknown>>(PATHS.listTriggers, this.scope({
+        symbolId: symbolId ?? 0, status: [], limit: 100, pageToken
+      }), { authenticated: true, retryRead: true });
+      rows.push(...asArray(raw.triggers));
+      pageToken = asString(raw.nextPageToken);
+      if (pageToken && (seen.has(pageToken) || seen.size >= 100)) throw new Error("Strategy pagination did not terminate");
+      seen.add(pageToken);
+    } while (pageToken);
+    return rows.map((item): TriggerSummary => {
       const row = asRecord(item);
       const result: TriggerSummary = {
         triggerId: encodeBase58Uint64(asString(row.triggerId, "0")),
@@ -263,7 +272,7 @@ export class PolyesterGateway implements ExchangeGateway {
         raw: row
       };
       const clientTriggerId = asString(row.clientTriggerId);
-      const side = asString(row.side);
+      const side = asString(row.side) || asString(asRecord(row.stopLoss ?? row.takeProfit ?? row.trailingStop ?? row.twap ?? row.ladder).side);
       if (clientTriggerId) result.clientTriggerId = clientTriggerId;
       if (side) result.side = side;
       return result;

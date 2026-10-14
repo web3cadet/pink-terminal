@@ -27,7 +27,7 @@ export class ReadOnlyGateway implements ExchangeGateway {
   listOpenOrders(symbolId?: number): Promise<OrderSummary[]> { return this.gateway.listOpenOrders(symbolId); }
   listOrderHistory(symbolId?: number): Promise<OrderSummary[]> { return this.gateway.listOrderHistory(symbolId); }
   getOrderByClientId(clientOrderId: string): Promise<OrderSummary | null> { return this.gateway.getOrderByClientId(clientOrderId); }
-  getOrderDetails(orderId: string): Promise<OrderDetails | null> { return this.gateway.getOrderDetails(orderId); }
+  getOrderDetails(orderId: string, pageToken?: string): Promise<OrderDetails | null> { return this.gateway.getOrderDetails(orderId, pageToken); }
   listTriggers(symbolId?: number): Promise<TriggerSummary[]> { return this.gateway.listTriggers(symbolId); }
 
   createOrder(_draft: OrderDraft, _clientOrderId: string): Promise<OrderReceipt> { return this.blocked("order creation"); }

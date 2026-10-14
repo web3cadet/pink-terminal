@@ -4,8 +4,9 @@ Copyright © 2026 099andr. Licensed under the
 [Apache License 2.0](LICENSE).
 
 This is an independent community project. It is not developed or operated by
-the official Polyester team. Polyester and the Polyester logo belong to their
-respective rights holders.
+the official Polyester team. Polyester is referenced solely to identify
+compatibility with the Polyester testnet. No rights are claimed in the
+Polyester name or related marks.
 
 An independent, self-hosted Telegram interface for Polyester testnet spot markets. Each operator runs a private instance and keeps the Telegram token and Polyester Ed25519 secret on their own VPS.
 
@@ -150,4 +151,4 @@ The live Telegram terminal uses bounded polling and edits one existing message. 
 - [Orders reference](https://testnet.polyester.com/docs/sdk/typescript/reference/orders)
 - [Triggers reference](https://testnet.polyester.com/docs/sdk/typescript/reference/triggers)
 
-Polyester names and marks belong to their respective owner. This community project is not presented as an official client.
+Polyester is referenced solely to identify compatibility with the Polyester testnet. No rights are claimed in the Polyester name or related marks. This community project is not presented as an official client.

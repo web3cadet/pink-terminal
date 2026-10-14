@@ -201,7 +201,7 @@ export interface ExchangeGateway {
   listOpenOrders(symbolId?: number): Promise<OrderSummary[]>;
   listOrderHistory(symbolId?: number): Promise<OrderSummary[]>;
   getOrderByClientId(clientOrderId: string): Promise<OrderSummary | null>;
-  getOrderDetails(orderId: string): Promise<OrderDetails | null>;
+  getOrderDetails(orderId: string, pageToken?: string): Promise<OrderDetails | null>;
   cancelOrder(clientOrderId: string, symbolId: number): Promise<Record<string, unknown>>;
   cancelAll(symbolIds: number[], dryRun: boolean, requestId: string): Promise<Record<string, unknown>>;
   listTriggers(symbolId?: number): Promise<TriggerSummary[]>;

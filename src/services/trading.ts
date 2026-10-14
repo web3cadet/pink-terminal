@@ -37,6 +37,7 @@ export class TradingService {
     const preview = await this.gateway.previewOrder(draft, clientId);
     if (!preview.admissible) throw new Error(`Order rejected by preview: ${preview.rejectionCode ?? "UNKNOWN"} ${preview.rejectionMessage ?? ""}`.trim());
     const expiresAt = Date.now() + this.config.confirmationTtlSeconds * 1_000;
+    this.db.invalidateConfirmations(chatId, userId, "order");
     this.db.createIntent({
       id, chatId, userId, operation: "order", clientId, payload: draft as unknown as Record<string, unknown>,
       preview: preview.raw, status: "previewed", expiresAt
@@ -46,6 +47,7 @@ export class TradingService {
 
   async confirmOrder(id: string, chatId: number, userId: number): Promise<OrderReceipt> {
     const intent = this.requireOwnedIntent(id, chatId, userId, "order");
+    if (intent.status !== "previewed") throw new Error("This confirmation was already used or is no longer valid");
     if (intent.expiresAt < Date.now()) {
       this.db.finishIntent(id, "expired", null, "confirmation expired");
       throw new Error("Confirmation expired. Build and preview the order again.");
@@ -56,8 +58,8 @@ export class TradingService {
       this.db.finishIntent(id, "accepted", receipt.raw, null);
       return receipt;
     } catch (error) {
-      if (error instanceof PolyesterApiError && (error.code === "TIMEOUT" || error.status >= 500 || error.status === 0)) {
-        this.db.finishIntent(id, "unknown", null, error.message);
+      if (isUncertainMutation(error)) {
+        this.db.finishIntent(id, "unknown", null, String(error));
         this.logger.warn("order_outcome_unknown", { intentId: id, clientOrderId: intent.clientId });
         throw new Error(`Order outcome is unknown. It will be reconciled by client ID ${intent.clientId}; do not submit it again.`);
       }
@@ -75,6 +77,7 @@ export class TradingService {
     const id = randomUUID();
     const clientId = `tr-${randomUUID().replaceAll("-", "")}`;
     const expiresAt = Date.now() + this.config.confirmationTtlSeconds * 1_000;
+    this.db.invalidateConfirmations(chatId, userId, "trigger");
     this.db.createIntent({
       id, chatId, userId, operation: "trigger", clientId, payload: draft as unknown as Record<string, unknown>,
       preview: null, status: "previewed", expiresAt
@@ -91,6 +94,10 @@ export class TradingService {
       this.db.finishIntent(id, "accepted", result, null);
       return result;
     } catch (error) {
+      if (isUncertainMutation(error)) {
+        this.db.finishIntent(id, "unknown", null, String(error));
+        throw new Error(`Strategy outcome is unknown. Checking client ID ${intent.clientId}; do not activate it again.`);
+      }
       this.db.finishIntent(id, "rejected", null, error instanceof Error ? error.message : "unknown error");
       throw error;
     }
@@ -109,23 +116,37 @@ export class TradingService {
         this.logger.warn("order_reconcile_failed", { intentId: intent.id, error: error instanceof Error ? error.message : "unknown" });
       }
     }
+    const pendingTriggers = this.db.listUnknownTriggerIntents();
+    if (pendingTriggers.length) {
+      try {
+        const triggers = await this.gateway.listTriggers();
+        for (const intent of pendingTriggers) {
+          const trigger = triggers.find(t => t.clientTriggerId === intent.clientId);
+          if (trigger) { this.db.finishIntent(intent.id, "reconciled", trigger.raw, null); resolved += 1; }
+        }
+      } catch (error) { this.logger.warn("trigger_reconcile_failed", { error: String(error) }); }
+    }
     return resolved;
   }
 
   async syncBotTradingVolume(): Promise<number> {
     let addedFills = 0;
-    for (const intent of this.db.listOrderIntentsForVolume()) {
+    const parentOwners = new Map<string, number>();
+    const intents = this.db.listOrderIntentsForVolume();
+    for (const intent of intents) {
+      if (intent.result?.orderId !== undefined) parentOwners.set(String(intent.result.orderId), intent.userId);
       if (this.db.isBotVolumeOrderComplete(intent.clientId)) continue;
       try {
         const order = await this.gateway.getOrderByClientId(intent.clientId);
         if (!order) continue;
+        if (order.raw.orderId !== undefined) parentOwners.set(String(order.raw.orderId), intent.userId);
         addedFills += await this.syncOrderVolume(intent.userId, intent.clientId, order);
       } catch (error) {
         this.logger.warn("bot_volume_sync_failed", { intentId: intent.id, error: error instanceof Error ? error.message : "unknown" });
       }
     }
     const triggerOwners = new Map(this.db.listTriggerOwnersForVolume().map(item => [item.triggerId, item.userId]));
-    if (triggerOwners.size > 0) {
+    if (triggerOwners.size > 0 || parentOwners.size > 0) {
       try {
         const orders = await this.gateway.listOrderHistory();
         for (const order of orders) {
@@ -133,7 +154,8 @@ export class TradingService {
           if (!origin || typeof origin !== "object" || Array.isArray(origin)) continue;
           const triggerIdValue = (origin as Record<string, unknown>).triggerId;
           const triggerId = typeof triggerIdValue === "string" || typeof triggerIdValue === "number" ? String(triggerIdValue) : "";
-          const userId = triggerOwners.get(triggerId);
+          const parentId = String((origin as Record<string, unknown>).parentOrderId ?? "");
+          const userId = triggerOwners.get(triggerId) ?? parentOwners.get(parentId);
           if (userId === undefined) continue;
           const trackingId = `trigger:${triggerId}:order:${order.orderId}`;
           if (this.db.isBotVolumeOrderComplete(trackingId)) continue;
@@ -147,15 +169,27 @@ export class TradingService {
   }
 
   private async syncOrderVolume(userId: number, trackingId: string, order: OrderSummary): Promise<number> {
-    const details = await this.gateway.getOrderDetails(order.orderId);
+    let details = await this.gateway.getOrderDetails(order.orderId);
     if (!details) return 0;
+    const executions = [...details.executions];
+    const seen = new Set<string>();
+    while (details.nextPageToken) {
+      const token = details.nextPageToken;
+      if (seen.has(token) || seen.size >= 100) throw new Error("Execution pagination did not terminate");
+      seen.add(token);
+      const next = await this.gateway.getOrderDetails(order.orderId, token);
+      if (!next) throw new Error("Execution page unavailable");
+      executions.push(...next.executions); details = next;
+    }
     let addedFills = 0;
-    details.executions.forEach((execution, index) => {
+    executions.forEach((execution, index) => {
       const executionKey = execution.matchId ?? [order.orderId, execution.tsNs ?? "", execution.price, execution.qty, index].join(":");
       const quoteVolume = multiplyDecimals(execution.qty, execution.price, 18);
       if (this.db.recordBotFillVolume(userId, trackingId, executionKey, quoteVolume)) addedFills += 1;
     });
-    if (isTerminalOrderStatus(details.order.status) && !details.nextPageToken) {
+    const filled = Number(details.order.cumulativeQty ?? (details.order.status.includes("FILLED") ? details.order.totalQty : "0"));
+    const indexed = executions.reduce((sum, execution) => sum + Number(execution.qty), 0);
+    if (isTerminalOrderStatus(details.order.status) && indexed + 1e-12 >= filled) {
       this.db.markBotVolumeOrderComplete(trackingId, userId, details.order.status);
     }
     return addedFills;
@@ -168,7 +202,12 @@ export class TradingService {
   }
 }
 
+function isUncertainMutation(error: unknown): boolean {
+  return !(error instanceof PolyesterApiError) || error.status === 0 || error.status >= 500;
+}
+
 function isTerminalOrderStatus(status: string): boolean {
   const normalized = status.toUpperCase();
+  if (normalized.includes("PARTIAL")) return false;
   return ["FILLED", "CANCEL", "REJECT", "EXPIRED"].some(value => normalized.includes(value));
 }

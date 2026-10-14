@@ -74,6 +74,15 @@ export class AppDatabase {
     return row ? mapIntent(row) : null;
   }
 
+  invalidateConfirmations(chatId: number, userId: number, operation?: "order" | "trigger"): void {
+    this.db.prepare("UPDATE operation_intents SET status = 'superseded', updated_at = ? WHERE chat_id = ? AND user_id = ? AND status = 'previewed' AND (? IS NULL OR operation = ?)")
+      .run(Date.now(), chatId, userId, operation ?? null, operation ?? null);
+  }
+
+  listUnknownTriggerIntents(): IntentRecord[] {
+    return (this.db.prepare("SELECT * FROM operation_intents WHERE operation = 'trigger' AND status IN ('sending', 'unknown') ORDER BY created_at").all() as unknown as DbIntentRow[]).map(mapIntent);
+  }
+
   transitionIntent(id: string, fromStatuses: string[], toStatus: string): boolean {
     if (fromStatuses.length === 0) return false;
     const placeholders = fromStatuses.map(() => "?").join(",");

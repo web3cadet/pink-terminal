@@ -16,7 +16,7 @@ describe("bot trading volume", () => {
       orderId: "order-1", clientOrderId: "tg-order-1", symbolId: 1, side: "BUY", status: "ORDER_STATUS_FILLED", raw: {}
     }));
     const getOrderDetails = vi.fn(async () => ({
-      order: { orderId: "order-1", clientOrderId: "tg-order-1", symbolId: 1, side: "BUY", status: "ORDER_STATUS_FILLED", raw: {} },
+      order: { orderId: "order-1", clientOrderId: "tg-order-1", symbolId: 1, side: "BUY", status: "ORDER_STATUS_FILLED", cumulativeQty: "1.75", raw: {} },
       executions: [
         { matchId: "match-1", price: "100", qty: "0.5" },
         { matchId: "match-2", price: "80", qty: "1.25" }
