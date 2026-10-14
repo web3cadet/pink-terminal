@@ -24,7 +24,7 @@ bash install.sh
 For a new Ubuntu or Debian VPS, use the public one-line installer:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/web3cadet/polyester-community-trading-bot/main/install.sh | bash -s -- --repo https://github.com/web3cadet/polyester-community-trading-bot.git
+curl -fsSL https://raw.githubusercontent.com/web3cadet/pink-terminal/main/install.sh | bash -s -- --repo https://github.com/web3cadet/pink-terminal.git
 ```
 
 The installer reads interactive answers directly from the terminal, so the wizard continues to work when the script is piped from `curl`. After installation, open the numeric management menu with `./manage.sh` to start, stop, restart, inspect status or logs, reconfigure, or update the bot. The installer never asks for a Polyester public key: the API Key ID and 32-byte private Ed25519 seed are sufficient.
@@ -34,7 +34,7 @@ The installer reads interactive answers directly from the terminal, so the wizar
 The Windows release uses a single cross-shell command in the integrated VS Code terminal. The user opens an empty folder and runs:
 
 ```text
-npx --yes github:web3cadet/polyester-community-trading-bot
+npx --yes github:web3cadet/pink-terminal
 ```
 
 The package exposes `scripts/windows-installer.mjs` as its only executable, so `npx` downloads the current repository and immediately opens the guided installer. It preserves an existing `.env`, `data/`, `.runtime/` and installed dependencies during a source refresh, then synchronizes dependencies, runs the complete check suite, builds production output, validates authenticated reads and a non-mutating live preview, starts the Telegram bot in the background and prints its direct `t.me` URL.

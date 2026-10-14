@@ -4,7 +4,7 @@ set -Eeuo pipefail
 # Pink Terminal installer for Ubuntu/Debian hosts.
 # Canonical public source used when the installer is launched without --repo.
 
-DEFAULT_REPOSITORY_URL="https://github.com/web3cadet/polyester-community-trading-bot.git"
+DEFAULT_REPOSITORY_URL="https://github.com/web3cadet/pink-terminal.git"
 REPOSITORY_URL="${POLYESTER_BOT_REPO_URL:-$DEFAULT_REPOSITORY_URL}"
 INSTALL_DIR="${POLYESTER_BOT_DIR:-$HOME/polyester-trading-terminal}"
 FORCE_RECONFIGURE=false
@@ -179,7 +179,7 @@ resolve_application() {
     return
   fi
 
-  [[ -n "$REPOSITORY_URL" ]] || die "Repository URL is not configured. Pass --repo https://github.com/web3cadet/polyester-community-trading-bot.git"
+  [[ -n "$REPOSITORY_URL" ]] || die "Repository URL is not configured. Pass --repo https://github.com/web3cadet/pink-terminal.git"
   [[ "$REPOSITORY_URL" =~ ^https://github\.com/[A-Za-z0-9._-]+/[A-Za-z0-9._-]+(\.git)?$ ]] \
     || die "--repo must be a public GitHub HTTPS repository URL."
 

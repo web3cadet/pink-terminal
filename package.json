@@ -6,10 +6,10 @@
   "description": "Pink Terminal — a self-hosted Telegram trading interface for Polyester testnet",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/web3cadet/polyester-community-trading-bot.git"
+    "url": "git+https://github.com/web3cadet/pink-terminal.git"
   },
   "bugs": {
-    "url": "https://github.com/web3cadet/polyester-community-trading-bot/issues"
+    "url": "https://github.com/web3cadet/pink-terminal/issues"
   },
   "type": "module",
   "bin": {
