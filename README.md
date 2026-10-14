@@ -57,6 +57,8 @@ Re-run the original one-line installer to refresh source code and dependencies. 
 
 macOS support is beta. Windows keeps its existing background runner; macOS uses a separate runner with an authenticated localhost control channel. Both expose the same npm management commands. The `.github/workflows/platform-checks.yml` workflow checks Windows, Ubuntu, macOS Apple Silicon and macOS Intel; a prepared workflow is not evidence of a completed run. A manual macOS setup with real Telegram/Polyester credentials is still required before removing the beta label.
 
+If the API access check fails, the installer stays open: press Enter to recheck after updating permissions, or choose 2 to replace only the API Key ID and private seed. Telegram settings are kept. Signature errors are shown separately from permission errors. Transfers and withdrawals are listed as recommended None settings, not as verified permissions. The trading check uses an order preview and places no order.
+
 Use `npm run bot:uninstall` for confirmed removal of a local installed copy, keeping `.env`. The command deletes local history and logs but does not cancel exchange orders or strategies. It refuses source Git checkouts.
 
 ## What is implemented

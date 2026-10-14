@@ -28,5 +28,6 @@ jobs:
         run: |
           bash -n install.sh manage.sh
           python3 tests/uninstall-linux-test.py
+          python3 tests/setup-access-shell-test.py
           docker build -t pink-terminal-ci .
           docker run --rm --entrypoint node pink-terminal-ci --check dist/index.js

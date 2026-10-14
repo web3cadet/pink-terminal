@@ -3,6 +3,7 @@
 import assert from "node:assert/strict";
 import { runInstallerCommand } from "./installer-process.mjs";
 import { localPlatform } from "./local-platform.mjs";
+import { retryAccessCheck, replaceApiValues } from "./access-retry.mjs";
 import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { chmod, cp, mkdir, rename, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
@@ -202,17 +203,7 @@ async function collectConfiguration() {
     if (!validateAllowedId(allowedId)) print(`${color.yellow}Enter a numeric Telegram ID.${color.reset}`);
   }
 
-  print(`\n${color.pink}${color.bold}POLYESTER API${color.reset}`);
-  let apiKeyId = "";
-  while (!validateApiKeyId(apiKeyId)) {
-    apiKeyId = await askLine("API Key ID (ak_…)");
-    if (!validateApiKeyId(apiKeyId)) print(`${color.yellow}The API Key ID must begin with ak_.${color.reset}`);
-  }
-  let apiSecret = "";
-  while (!validateSecret(apiSecret)) {
-    apiSecret = await askSecret("Private Ed25519 seed (64 hexadecimal characters)");
-    if (!validateSecret(apiSecret)) print(`${color.yellow}Expected exactly 64 hexadecimal characters.${color.reset}`);
-  }
+  const { apiKeyId, apiSecret } = await collectApiKey();
   let subaccountId = "";
   while (true) {
     subaccountId = await askLine("Subaccount ID; press Enter for the primary account");
@@ -233,6 +224,32 @@ async function collectConfiguration() {
   if (confirmation === 2) return collectConfiguration();
   if (confirmation === 3) process.exit(0);
   return { telegramToken, allowedId, apiKeyId, apiSecret, subaccountId, identity };
+}
+
+async function collectApiKey() {
+  print(`\n${color.pink}${color.bold}POLYESTER API${color.reset}`);
+  let apiKeyId = "";
+  while (!validateApiKeyId(apiKeyId)) {
+    apiKeyId = await askLine("API Key ID (ak_…)");
+    if (!validateApiKeyId(apiKeyId)) print(`${color.yellow}The API Key ID must begin with ak_.${color.reset}`);
+  }
+  let apiSecret = "";
+  while (!validateSecret(apiSecret)) {
+    apiSecret = await askSecret("Private Ed25519 seed (64 hexadecimal characters)");
+    if (!validateSecret(apiSecret)) print(`${color.yellow}Expected exactly 64 hexadecimal characters.${color.reset}`);
+  }
+  return { apiKeyId, apiSecret: normalizeSecret(apiSecret) };
+}
+
+async function replaceApiKey() {
+  const { apiKeyId, apiSecret } = await collectApiKey();
+  const envFile = path.join(TARGET_DIR, ".env");
+  const content = replaceApiValues(readFileSync(envFile, "utf8"), apiKeyId, apiSecret);
+  const temporary = path.join(TARGET_DIR, `.env.tmp.${process.pid}`);
+  await writeFile(temporary, content, { encoding: "utf8", mode: 0o600 });
+  if (process.platform === "win32") await rm(envFile, { force: true });
+  await rename(temporary, envFile);
+  print(`${color.green}API key saved. Telegram settings and other configuration kept.${color.reset}`);
 }
 
 async function writeProtectedConfiguration(config) {
@@ -338,10 +355,16 @@ async function main() {
     config = { identity: await refreshExistingTelegramIdentity() };
   }
   progress(82, keepExisting ? "Existing protected configuration preserved" : "Protected local configuration saved");
-  run(process.execPath, [path.join(TARGET_DIR, "dist", "tools", "private-read-smoke.js")], "Polyester balance/API policy validation");
-  progress(89, "Polyester credentials and read policy accepted");
-  run(process.execPath, [path.join(TARGET_DIR, "dist", "tools", "live-preview-smoke.js")], "Non-mutating live order preview validation");
-  progress(94, "Trading preview permission accepted");
+  await retryAccessCheck({
+    check: async () => {
+      try {
+        run(process.execPath, [path.join(TARGET_DIR, "dist", "tools", "setup-access-check.js")], "API access check", { inherit: true });
+        return true;
+      } catch { return false; }
+    },
+    ask: askLine, replaceKey: replaceApiKey, print
+  });
+  progress(94, "API access checks passed");
   run(process.execPath, [path.join(TARGET_DIR, "scripts", "local-manager.mjs"), "restart"], "Bot launch", { inherit: false });
   await waitForStarted();
   progress(100, "READY");

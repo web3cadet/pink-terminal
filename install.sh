@@ -222,20 +222,7 @@ collect_configuration() {
     say "${YELLOW}Enter a positive numeric Telegram user ID.${RESET}"
   done
 
-  say ""
-  say "${PINK}${BOLD}Polyester API credentials${RESET}"
-  while true; do
-    read_value "API Key ID (ak_…)" API_KEY_ID
-    [[ "$API_KEY_ID" =~ ^ak_[A-Za-z0-9]{16,}$ ]] && break
-    say "${YELLOW}The API Key ID must begin with ak_.${RESET}"
-  done
-  while true; do
-    read_secret "Private Ed25519 seed (64 hexadecimal characters)" API_SECRET_HEX
-    API_SECRET_HEX="${API_SECRET_HEX#0x}"
-    API_SECRET_HEX="${API_SECRET_HEX#0X}"
-    [[ "$API_SECRET_HEX" =~ ^[A-Fa-f0-9]{64}$ ]] && break
-    say "${YELLOW}Expected exactly 64 hexadecimal characters.${RESET}"
-  done
+  collect_api_key
   while true; do
     read_value "Subaccount ID; press Enter for the primary account" SUBACCOUNT_ID ""
     [[ -z "$SUBACCOUNT_ID" || "$SUBACCOUNT_ID" =~ ^[0-9]+$ ]] && break
@@ -273,6 +260,61 @@ collect_configuration() {
     2) collect_configuration; return ;;
     3) exit 0 ;;
   esac
+}
+
+collect_api_key() {
+  say ""
+  say "${PINK}${BOLD}Polyester API credentials${RESET}"
+  while true; do
+    read_value "API Key ID (ak_…)" API_KEY_ID
+    [[ "$API_KEY_ID" =~ ^ak_[A-Za-z0-9]{16,}$ ]] && break
+    say "${YELLOW}The API Key ID must begin with ak_.${RESET}"
+  done
+  while true; do
+    read_secret "Private Ed25519 seed (64 hexadecimal characters)" API_SECRET_HEX
+    API_SECRET_HEX="${API_SECRET_HEX#0x}"
+    API_SECRET_HEX="${API_SECRET_HEX#0X}"
+    [[ "$API_SECRET_HEX" =~ ^[A-Fa-f0-9]{64}$ ]] && break
+    say "${YELLOW}Expected exactly 64 hexadecimal characters.${RESET}"
+  done
+}
+
+replace_api_key() {
+  collect_api_key
+  local target="$APP_DIR/.env" temporary line
+  temporary="$(mktemp "$APP_DIR/.env.tmp.XXXXXX")"
+  chmod 600 "$temporary"
+  # Preserve Telegram, Subaccount, trading mode and custom settings verbatim.
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    if [[ "$line" =~ ^[[:space:]]*(export[[:space:]]+)?POLYESTER_API_(KEY_ID|SECRET_HEX)[[:space:]]*= ]]; then continue; fi
+    printf '%s\n' "$line"
+  done <"$target" >"$temporary"
+  printf 'POLYESTER_API_KEY_ID=%s\nPOLYESTER_API_SECRET_HEX=%s\n' "$API_KEY_ID" "$API_SECRET_HEX" >>"$temporary"
+  mv -f -- "$temporary" "$target"
+  say "${GREEN}API key saved. Telegram settings and other configuration kept.${RESET}"
+}
+
+check_api_access() {
+  local choice configured_mode
+  while true; do
+    configured_mode="$(sed -n 's/^TRADING_MODE=//p' "$APP_DIR/.env" | tail -n 1)"
+    if [[ "$configured_mode" == "paper" ]]; then
+      say "Paper mode: private API access check skipped."
+      return
+    fi
+    if compose run --rm --no-deps -T bot node dist/tools/setup-access-check.js >&4 2>&4; then return; fi
+    say "Please check your API permissions and credentials."
+    say "1) Recheck — press Enter"
+    say "2) Enter a new API Key ID and private seed"
+    while true; do
+      read_value "Selection" choice
+      case "$choice" in
+        ""|1) break ;;
+        2) replace_api_key; break ;;
+        *) say "Press Enter to recheck, or type 2 to replace the API key." ;;
+      esac
+    done
+  done
 }
 
 write_environment() {
@@ -327,24 +369,7 @@ deploy() {
   fi
 
   progress 72 "Validating the Polyester account and API policy"
-  : >"$BUILD_LOG"
-  if ! compose run --rm --no-deps bot node --enable-source-maps dist/tools/private-read-smoke.js >"$BUILD_LOG" 2>&1; then
-    say "${RED}Polyester rejected the API credentials or read policy.${RESET}"
-    tail -n 60 "$BUILD_LOG" >&4
-    exit 1
-  fi
-
-  local configured_mode
-  configured_mode="$(sed -n 's/^TRADING_MODE=//p' "$APP_DIR/.env" | tail -n 1)"
-  if [[ "$configured_mode" == "live" ]]; then
-    progress 80 "Checking non-mutating order preview permission"
-    : >"$BUILD_LOG"
-    if ! compose run --rm --no-deps bot node --enable-source-maps dist/tools/live-preview-smoke.js >"$BUILD_LOG" 2>&1; then
-      say "${RED}Polyester rejected the trading preview. Check the trade policy and market scope.${RESET}"
-      tail -n 60 "$BUILD_LOG" >&4
-      exit 1
-    fi
-  fi
+  check_api_access
 
   progress 88 "Starting the private Telegram instance"
   : >"$BUILD_LOG"
