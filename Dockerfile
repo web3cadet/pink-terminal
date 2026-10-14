@@ -12,7 +12,6 @@ WORKDIR /app
 COPY package*.json ./
 RUN npm ci --omit=dev && npm cache clean --force
 COPY --from=build /app/dist ./dist
-COPY assets ./assets
 RUN mkdir -p /app/data && chown -R node:node /app
 USER node
 CMD ["node", "--enable-source-maps", "dist/index.js"]

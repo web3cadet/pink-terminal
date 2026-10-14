@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-# Polyester Trading Terminal installer for Ubuntu/Debian hosts.
+# Pink Terminal installer for Ubuntu/Debian hosts.
 # Canonical public source used when the installer is launched without --repo.
 
 DEFAULT_REPOSITORY_URL="https://github.com/web3cadet/polyester-community-trading-bot.git"
@@ -40,15 +40,14 @@ die() { say "${RED}${BOLD}Error:${RESET} $*"; exit 1; }
 banner() {
   printf '\033[2J\033[H' >&4
   say "${PINK}${BOLD}"
-  say '  ██████╗  ██████╗ ██╗  ██╗   ██╗███████╗███████╗████████╗███████╗██████╗ '
-  say '  ██╔══██╗██╔═══██╗██║  ╚██╗ ██╔╝██╔════╝██╔════╝╚══██╔══╝██╔════╝██╔══██╗'
-  say '  ██████╔╝██║   ██║██║   ╚████╔╝ █████╗  ███████╗   ██║   █████╗  ██████╔╝'
-  say '  ██╔═══╝ ██║   ██║██║    ╚██╔╝  ██╔══╝  ╚════██║   ██║   ██╔══╝  ██╔══██╗'
-  say '  ██║     ╚██████╔╝███████╗ ██║   ███████╗███████║   ██║   ███████╗██║  ██║'
-  say '  ╚═╝      ╚═════╝ ╚══════╝ ╚═╝   ╚══════╝╚══════╝   ╚═╝   ╚══════╝╚═╝  ╚═╝'
+  say '  ██████╗ ██╗███╗   ██╗██╗  ██╗    ████████╗███████╗██████╗ ███╗   ███╗'
+  say '  ██╔══██╗██║████╗  ██║██║ ██╔╝    ╚══██╔══╝██╔════╝██╔══██╗████╗ ████║'
+  say '  ██████╔╝██║██╔██╗ ██║█████╔╝        ██║   █████╗  ██████╔╝██╔████╔██║'
+  say '  ██╔═══╝ ██║██║╚██╗██║██╔═██╗        ██║   ██╔══╝  ██╔══██╗██║╚██╔╝██║'
+  say '  ██║     ██║██║ ╚████║██║  ██╗       ██║   ███████╗██║  ██║██║ ╚═╝ ██║'
+  say '  ╚═╝     ╚═╝╚═╝  ╚═══╝╚═╝  ╚═╝       ╚═╝   ╚══════╝╚═╝  ╚═╝╚═╝     ╚═╝'
   say "${RESET}"
-  say "${BOLD}                         TRADING TERMINAL${RESET}"
-  say "${DIM}                  self-hosted · testnet · private${RESET}"
+  say "${DIM}                     self-hosted · testnet · private${RESET}"
   say ""
 }
 
@@ -411,7 +410,7 @@ main() {
   select_docker
   deploy
   say ""
-  say "${GREEN}${BOLD}✓ Polyester Trading Terminal is running.${RESET}"
+  say "${GREEN}${BOLD}✓ Pink Terminal is running.${RESET}"
   say "Open the bot in Telegram and send ${BOLD}/start${RESET}."
   say ""
   say "Management menu:"

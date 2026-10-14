@@ -6,8 +6,8 @@ export const pairLink = (symbol: string) => `<a href="${pairUrl(symbol)}">${esca
 export const assetLink = (asset: string, marketSymbol?: string) => marketSymbol
   ? `<a href="${pairUrl(marketSymbol)}"><b>${escapeHtml(asset)}</b> ↗</a>`
   : `<b>${escapeHtml(asset)}</b>`;
-export const heading = (label: string) => `🩷 <a href="${WEBSITE}"><b>POLYESTER</b></a>\n<b>${escapeHtml(label)}</b>`;
-const TERMINAL_WORDMARK = "💗 𝙋𝙊𝙇𝙔𝙀𝙎𝙏𝙀𝙍";
+export const heading = (label: string) => `💗 <b>PINK TERMINAL</b>\n<b>${escapeHtml(label)}</b>`;
+const TERMINAL_WORDMARK = "💗 𝙋𝙄𝙉𝙆 𝙏𝙀𝙍𝙈𝙄𝙉𝘼𝙇";
 export const terminalHeading = (label: string) => `${TERMINAL_WORDMARK}\n<b>${escapeHtml(label)}</b>`;
 export const section = (label: string) => `<b>${escapeHtml(label)}</b>`;
 /** Display only: preserve exact decimal strings in drafts and requests. */

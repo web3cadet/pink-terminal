@@ -194,7 +194,7 @@ async function reconfigure() {
 
 function header() {
   process.stdout.write("\u001b[2J\u001b[H");
-  print(`${color.pink}${color.bold}POLYESTER · TRADING TERMINAL${color.reset}`);
+  print(`${color.pink}${color.bold}PINK TERMINAL${color.reset}`);
   print(`${color.dim}Local Windows instance manager${color.reset}\n`);
 }
 

@@ -185,7 +185,7 @@ export function createTelegramBot(deps: {
 
   bot.command("start", async (ctx) => showHome(ctx, config, gateway, database));
   bot.command("menu", async (ctx) => showHome(ctx, config, gateway, database));
-  bot.hears(/^(?:☰ Menu|💗 Polyester Terminal)$/, async (ctx) => {
+  bot.hears(/^(?:☰ Menu|💗 Pink Terminal)$/, async (ctx) => {
     clearFlow(ctx, database);
     await showHome(ctx, config, gateway, database);
   });

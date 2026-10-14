@@ -42,7 +42,7 @@ pause() {
 
 header() {
   printf '\033[2J\033[H' >&4
-  say "${PINK}${BOLD}POLYESTER · TRADING TERMINAL${RESET}"
+  say "${PINK}${BOLD}PINK TERMINAL${RESET}"
   say "${DIM}Self-hosted instance manager${RESET}"
   say ""
 }

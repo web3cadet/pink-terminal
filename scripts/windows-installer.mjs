@@ -36,7 +36,7 @@ function fail(message) { throw new Error(message); }
 function banner() {
   process.stdout.write("\u001b[2J\u001b[H");
   print(`${color.pink}${color.bold}`);
-  print("  POLYESTER  /  TRADING TERMINAL");
+  print("  PINK TERMINAL");
   print(`${color.reset}${color.dim}  self-hosted · testnet · private · Windows${color.reset}\n`);
 }
 
@@ -144,7 +144,8 @@ function assertTargetIsSafe() {
   if (LOCAL_RUN) return;
   const entries = readdirSync(TARGET_DIR).filter((name) => ![".vscode"].includes(name));
   const packageFile = path.join(TARGET_DIR, "package.json");
-  const recognized = existsSync(packageFile) && JSON.parse(readFileSync(packageFile, "utf8")).name === "polyester-telegram-terminal";
+  const recognizedNames = new Set(["pink-terminal", "polyester-telegram-terminal"]);
+  const recognized = existsSync(packageFile) && recognizedNames.has(JSON.parse(readFileSync(packageFile, "utf8")).name);
   if (entries.length > 0 && !recognized) {
     fail("Open an empty folder in VS Code before running the installer. Existing unrelated files were not changed.");
   }
@@ -353,7 +354,7 @@ async function main() {
     const identityFile = path.join(TARGET_DIR, ".runtime", "telegram-bot.json");
     if (existsSync(identityFile)) identity = JSON.parse(readFileSync(identityFile, "utf8"));
   }
-  print(`\n${color.green}${color.bold}✓ Polyester Trading Terminal is running.${color.reset}`);
+  print(`\n${color.green}${color.bold}✓ Pink Terminal is running.${color.reset}`);
   if (identity?.url) print(`${color.bold}Open your bot:${color.reset} ${color.cyan}${identity.url}${color.reset}`);
   print(`Send ${color.bold}/start${color.reset} in Telegram.\n`);
   print(`${color.bold}Management menu:${color.reset} npm run manage`);

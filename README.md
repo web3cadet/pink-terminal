@@ -1,4 +1,4 @@
-# Polyester Telegram Terminal
+# Pink Terminal
 
 Copyright © 2026 099andr. Licensed under the
 [Apache License 2.0](LICENSE).
@@ -7,9 +7,9 @@ This is an independent community project. It is not developed or operated by
 the official Polyester team. Polyester and the Polyester logo belong to their
 respective rights holders.
 
-A self-hosted, testnet-first Telegram interface for Polyester spot markets. Each operator runs a private instance and keeps the Telegram token and Polyester Ed25519 secret on their own VPS.
+An independent, self-hosted Telegram interface for Polyester testnet spot markets. Each operator runs a private instance and keeps the Telegram token and Polyester Ed25519 secret on their own VPS.
 
-The project talks directly to Polyester's documented ConnectRPC JSON interface. It does not copy, bundle, or depend on the official TypeScript SDK.
+The project talks directly to Polyester's documented ConnectRPC JSON interface. It does not copy, bundle, or depend on the official TypeScript SDK. Pink Terminal does not set or replace the Telegram bot's profile photo automatically.
 
 ## Guided Ubuntu/VPS installer
 
@@ -96,7 +96,7 @@ Those checks require the operator's credentials and must be performed with the s
 Use a VS Code terminal with Node.js 22 or newer:
 
 ```bash
-cd "Polyester Bot"
+cd "Pink Terminal"
 npm ci
 npm run check
 npm run smoke:public

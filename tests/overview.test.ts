@@ -40,7 +40,7 @@ it("values trading plus funding without double-counting reserved funds and never
   expect(text).toContain("12.34 USDT");
   expect(text).toContain("<b>◈ PORTFOLIO</b>");
   expect(text).toContain("Volume: <b>12.34 USDT</b> <i>(filled via bot)</i>");
-  expect(text).toContain("𝙋𝙊𝙇𝙔𝙀𝙎𝙏𝙀𝙍\n<b>Terminal</b>\n");
+  expect(text).toContain("𝙋𝙄𝙉𝙆 𝙏𝙀𝙍𝙈𝙄𝙉𝘼𝙇\n<b>Terminal</b>\n");
   expect(text).not.toContain("<code>");
   expect(text).not.toContain("<blockquote>");
   expect(text).not.toContain("unrealized");

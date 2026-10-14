@@ -1,9 +1,9 @@
 {
-  "name": "polyester-telegram-terminal",
+  "name": "pink-terminal",
   "version": "0.1.0",
   "license": "Apache-2.0",
   "private": true,
-  "description": "Self-hosted Telegram trading terminal for Polyester testnet",
+  "description": "Pink Terminal — a self-hosted Telegram trading interface for Polyester testnet",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/web3cadet/polyester-community-trading-bot.git"
@@ -13,7 +13,7 @@
   },
   "type": "module",
   "bin": {
-    "polyester-terminal": "scripts/windows-installer.mjs"
+    "pink-terminal": "scripts/windows-installer.mjs"
   },
   "files": [
     "assets",

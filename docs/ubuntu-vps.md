@@ -32,10 +32,10 @@ sudo timedatectl set-ntp true
 
 ## 2. Copy the project
 
-Clone the repository or upload the `Polyester Bot` folder, then enter it:
+Clone the repository or upload the `Pink Terminal` folder, then enter it:
 
 ```bash
-cd "Polyester Bot"
+cd "Pink Terminal"
 cp .env.example .env
 chmod 600 .env
 nano .env

@@ -1,6 +1,3 @@
-import { access } from "node:fs/promises";
-import { fileURLToPath } from "node:url";
-import { InputFile } from "grammy";
 import { loadConfig } from "./config.js";
 import { Logger } from "./log.js";
 import { PolyesterGateway } from "./polyester/gateway.js";
@@ -9,32 +6,6 @@ import { ReadOnlyGateway } from "./polyester/read-only-gateway.js";
 import { AppDatabase } from "./storage/database.js";
 import { TradingService } from "./services/trading.js";
 import { createTelegramBot } from "./bot/bot.js";
-
-async function ensureBotProfilePhoto(
-  bot: ReturnType<typeof createTelegramBot>,
-  logger: Logger
-): Promise<void> {
-  try {
-    const me = await bot.api.getMe();
-    const existing = await bot.api.getUserProfilePhotos(me.id, { limit: 1 });
-    if (existing.total_count > 0) {
-      logger.info("bot_profile_photo_present", { botId: me.id });
-      return;
-    }
-
-    const photoPath = fileURLToPath(new URL("../assets/polyester-bot-avatar.jpg", import.meta.url));
-    await access(photoPath);
-    await bot.api.setMyProfilePhoto({
-      type: "static",
-      photo: new InputFile(photoPath, "polyester-bot-avatar.jpg")
-    });
-    logger.info("bot_profile_photo_installed", { botId: me.id });
-  } catch (error) {
-    logger.warn("bot_profile_photo_setup_failed", {
-      error: error instanceof Error ? error.message : "unknown"
-    });
-  }
-}
 
 async function main(): Promise<void> {
   const config = loadConfig();
@@ -51,10 +22,9 @@ async function main(): Promise<void> {
 
   try {
     await bot.api.setMyCommands([
-      { command: "menu", description: "Open Polyester Terminal" },
+      { command: "menu", description: "Open Pink Terminal" },
       { command: "cancel", description: "Cancel the current wizard" }
     ]);
-    await ensureBotProfilePhoto(bot, logger);
 
     let maintenanceBusy = false;
     const runMaintenance = async (): Promise<void> => {
