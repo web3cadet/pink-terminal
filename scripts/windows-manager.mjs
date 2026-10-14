@@ -8,6 +8,7 @@ import path from "node:path";
 import process from "node:process";
 import { createInterface } from "node:readline/promises";
 import { randomBytes } from "node:crypto";
+import { planUninstall, removeInstallation } from "./uninstall-files.mjs";
 
 const APP_DIR = process.cwd();
 const RUNTIME_DIR = path.join(APP_DIR, ".runtime");
@@ -192,6 +193,26 @@ async function reconfigure() {
   if (result.status !== 0) fail("Reconfiguration did not complete.");
 }
 
+async function uninstall() {
+  const plan = planUninstall(APP_DIR);
+  print(`\nUninstall from: ${plan.root}`);
+  print("This stops the managed bot and permanently deletes application files, dependencies, local history and logs.");
+  print("The .env file and unrelated top-level files are kept. Do not store personal files inside application directories.");
+  print("Exchange orders and strategies are NOT cancelled. Close them in Telegram or on Polyester first if required.");
+  print("Node.js, npm cache and the Telegram bot account are NOT removed.");
+  const rl = createInterface({ input: process.stdin, output: process.stdout });
+  let answer;
+  try { answer = await rl.question("Are you sure? Type DELETE to uninstall (Enter cancels): "); }
+  finally { rl.close(); }
+  if (answer.trim() !== "DELETE") { print("Uninstall cancelled. Nothing changed."); return false; }
+  const state = await currentState();
+  if (state.stale) fail("Cannot verify the stored bot process. Resolve its status before uninstalling.");
+  await stopBot({ quiet: true });
+  removeInstallation(APP_DIR);
+  print("UNINSTALLED. .env preserved. Local history and logs were deleted; no automatic recovery is provided.");
+  return true;
+}
+
 function header() {
   process.stdout.write("\u001b[2J\u001b[H");
   print(`${color.pink}${color.bold}PINK TERMINAL${color.reset}`);
@@ -214,6 +235,7 @@ async function menu() {
     print(`  ${color.cyan}4)${color.reset} Status`);
     print(`  ${color.cyan}5)${color.reset} Recent logs`);
     print(`  ${color.pink}6)${color.reset} Reconfigure credentials`);
+    print(`  ${color.red}7)${color.reset} Uninstall (keep .env)`);
     print(`  ${color.dim}0)${color.reset} Exit\n`);
     const rl = createInterface({ input: process.stdin, output: process.stdout });
     const answer = (await rl.question(`${color.bold}Selection:${color.reset} `)).trim();
@@ -225,8 +247,9 @@ async function menu() {
       else if (answer === "4") await showStatus();
       else if (answer === "5") showLogs();
       else if (answer === "6") await reconfigure();
+      else if (answer === "7") { if (await uninstall()) return; }
       else if (answer === "0") return;
-      else { print(`${color.yellow}Choose a number from 0 to 6.${color.reset}`); await sleep(900); continue; }
+      else { print(`${color.yellow}Choose a number from 0 to 7.${color.reset}`); await sleep(900); continue; }
     } catch (error) {
       print(`${color.red}${error instanceof Error ? error.message : String(error)}${color.reset}`);
     }
@@ -242,6 +265,7 @@ async function main() {
   if (command === "restart") return restartBot();
   if (command === "status") return showStatus();
   if (command === "logs") return showLogs();
+  if (command === "uninstall") return uninstall();
   if (command === "menu") return menu();
   fail("Unknown command. Use start, stop, restart, status, logs, or no argument for the menu.");
 }

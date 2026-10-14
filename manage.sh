@@ -55,6 +55,24 @@ show_status() {
   fi
 }
 
+uninstall_bot() {
+  command -v python3 >/dev/null 2>&1 || { say "Python 3 is required for safe uninstall."; return 1; }
+  python3 "$APP_DIR/scripts/uninstall-linux.py" --check || return 1
+  say "Uninstall from: $APP_DIR"
+  say "Permanently deletes bot files, Git checkout, dependencies, local history and logs. Keeps .env and unrelated top-level files."
+  say "Exchange orders and strategies are NOT cancelled. Close them first if required."
+  say "Docker, shared images/cache and the Telegram bot account are NOT removed."
+  printf '%s' "Are you sure? Type DELETE to uninstall (Enter cancels): " >&4
+  IFS= read -r confirmation <&3
+  if [[ "$confirmation" != DELETE ]]; then say "Uninstall cancelled. Nothing changed."; return 0; fi
+  compose down || return 1
+  python3 "$APP_DIR/scripts/uninstall-linux.py" --delete || return 1
+  say "UNINSTALLED. .env preserved. Local history and logs deleted; no automatic recovery is provided."
+  exit 0
+}
+
+if [[ "${1:-}" == uninstall ]]; then uninstall_bot; exit $?; fi
+
 while true; do
   header
   show_status
@@ -66,6 +84,7 @@ while true; do
   say "  ${CYAN}5)${RESET} Recent logs"
   say "  ${PINK}6)${RESET} Reconfigure"
   say "  ${PINK}7)${RESET} Update from Git and rebuild"
+  say "  ${RED}8)${RESET} Uninstall (keep .env)"
   say "  ${DIM}0)${RESET} Exit"
   say ""
   printf '%b' "${BOLD}Selection:${RESET} " >&4
@@ -83,7 +102,7 @@ while true; do
       pause
       ;;
     3)
-      compose restart bot
+      compose up -d --force-recreate bot
       say "${GREEN}Bot restarted.${RESET}"
       pause
       ;;
@@ -107,9 +126,10 @@ while true; do
       fi
       pause
       ;;
+    8) uninstall_bot; pause ;;
     0) exit 0 ;;
     *)
-      say "${YELLOW}Choose a number from 0 to 7.${RESET}"
+      say "${YELLOW}Choose a number from 0 to 8.${RESET}"
       sleep 1
       ;;
   esac

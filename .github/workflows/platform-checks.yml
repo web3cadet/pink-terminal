@@ -1,0 +1,32 @@
+name: Platform checks
+on:
+  workflow_dispatch:
+  push:
+    branches: [main, codex/macos-compatibility]
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-24.04, macos-15, macos-15-intel]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - run: npm run check
+      - run: npm run build
+      - run: node scripts/check-package.mjs
+      - if: runner.os == 'Linux'
+        run: |
+          bash -n install.sh manage.sh
+          python3 tests/uninstall-linux-test.py
+          docker build -t pink-terminal-ci .
+          docker run --rm --entrypoint node pink-terminal-ci --check dist/index.js

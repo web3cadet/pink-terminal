@@ -30,9 +30,9 @@ curl -fsSL https://raw.githubusercontent.com/web3cadet/pink-terminal/main/instal
 
 The installer reads interactive answers directly from the terminal, so the wizard continues to work when the script is piped from `curl`. After installation, open the numeric management menu with `./manage.sh` to start, stop, restart, inspect status or logs, reconfigure, or update the bot. The installer never asks for a Polyester public key: the API Key ID and 32-byte private Ed25519 seed are sufficient.
 
-## Guided Windows installer
+## Guided local installer: Windows and macOS (Beta)
 
-The Windows release uses a single cross-shell command in the integrated VS Code terminal. The user opens an empty folder and runs:
+Install Node.js 22.12+ (including npm) and Git. Open an empty folder in VS Code and run the following command in its terminal. macOS users may also use Terminal in that folder:
 
 ```text
 npx --yes github:web3cadet/pink-terminal
@@ -53,7 +53,11 @@ npm run bot:status
 npm run bot:logs
 ```
 
-Re-run the original one-line installer only to refresh source code and dependencies or to reopen the configuration flow. Ordinary restarts should use `npm run bot:restart`. Windows sleep or shutdown still stops local availability; use the Ubuntu/VPS path for a continuously available bot.
+Re-run the original one-line installer to refresh source code and dependencies. Use `npm run bot:restart` for an ordinary restart or after editing `.env`. Local operation requires an awake, online computer. Start the bot again after logout or reboot. The manager does not register a login service.
+
+macOS support is beta. Windows keeps its existing background runner; macOS uses a separate runner with an authenticated localhost control channel. Both expose the same npm management commands. The `.github/workflows/platform-checks.yml` workflow checks Windows, Ubuntu, macOS Apple Silicon and macOS Intel; a prepared workflow is not evidence of a completed run. A manual macOS setup with real Telegram/Polyester credentials is still required before removing the beta label.
+
+Use `npm run bot:uninstall` for confirmed removal of a local installed copy, keeping `.env`. The command deletes local history and logs but does not cancel exchange orders or strategies. It refuses source Git checkouts.
 
 ## What is implemented
 

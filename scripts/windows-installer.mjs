@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
+import { runInstallerCommand } from "./installer-process.mjs";
+import { localPlatform } from "./local-platform.mjs";
 import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { chmod, cp, mkdir, rename, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
@@ -15,6 +16,7 @@ const args = new Set(process.argv.slice(2));
 const LOCAL_RUN = args.has("--local") || path.resolve(SOURCE_DIR) === path.resolve(TARGET_DIR);
 const FORCE_RECONFIGURE = args.has("--reconfigure");
 const SELF_TEST = args.has("--self-test");
+const VERIFY_INSTALL = args.has("--verify-install");
 const PUBLIC_INSTALL_COMMAND = "npx --yes github:web3cadet/pink-terminal";
 
 const color = {
@@ -37,7 +39,7 @@ function banner() {
   process.stdout.write("\u001b[2J\u001b[H");
   print(`${color.pink}${color.bold}`);
   print("  PINK TERMINAL");
-  print(`${color.reset}${color.dim}  self-hosted · testnet · private · Windows${color.reset}\n`);
+  print(`${color.reset}${color.dim}  self-hosted · testnet · private · ${localPlatform().label}${color.reset}\n`);
 }
 
 function progress(percent, label) {
@@ -142,7 +144,7 @@ async function showDisclaimer() {
 
 function assertTargetIsSafe() {
   if (LOCAL_RUN) return;
-  const entries = readdirSync(TARGET_DIR).filter((name) => ![".vscode"].includes(name));
+  const entries = readdirSync(TARGET_DIR).filter((name) => ![".vscode", ".env", ".DS_Store"].includes(name));
   const packageFile = path.join(TARGET_DIR, "package.json");
   const recognizedNames = new Set(["pink-terminal", "polyester-telegram-terminal"]);
   const recognized = existsSync(packageFile) && recognizedNames.has(JSON.parse(readFileSync(packageFile, "utf8")).name);
@@ -167,18 +169,7 @@ async function copyApplication() {
 }
 
 function run(command, commandArgs, label, { inherit = false } = {}) {
-  const executable = process.platform === "win32" && command === "npm" ? "npm.cmd" : command;
-  const result = spawnSync(executable, commandArgs, {
-    cwd: TARGET_DIR,
-    env: { ...process.env },
-    encoding: "utf8",
-    stdio: inherit ? "inherit" : "pipe",
-    windowsHide: !inherit,
-  });
-  if (result.status !== 0) {
-    const output = `${result.stdout || ""}\n${result.stderr || ""}`.trim().split(/\r?\n/).slice(-55).join("\n");
-    fail(`${label} failed.${output ? `\n\n${output}` : ""}`);
-  }
+  return runInstallerCommand(command, commandArgs, label, { cwd: TARGET_DIR, inherit });
 }
 
 async function fetchTelegramIdentity(token) {
@@ -247,7 +238,7 @@ async function collectConfiguration() {
 async function writeProtectedConfiguration(config) {
   const temporary = path.join(TARGET_DIR, `.env.tmp.${process.pid}`);
   await writeFile(temporary, renderEnvironment(config), { encoding: "utf8", mode: 0o600 });
-  await rm(path.join(TARGET_DIR, ".env"), { force: true });
+  if (process.platform === "win32") await rm(path.join(TARGET_DIR, ".env"), { force: true });
   await rename(temporary, path.join(TARGET_DIR, ".env"));
   try { await chmod(path.join(TARGET_DIR, ".env"), 0o600); } catch { /* Windows uses ACLs rather than POSIX mode bits. */ }
   await mkdir(path.join(TARGET_DIR, "data"), { recursive: true });
@@ -271,7 +262,7 @@ async function refreshExistingTelegramIdentity() {
 }
 
 async function waitForStarted() {
-  const stateFile = path.join(TARGET_DIR, ".runtime", "windows-bot.json");
+  const stateFile = path.join(TARGET_DIR, ".runtime", localPlatform().state);
   const logFile = path.join(TARGET_DIR, ".runtime", "bot.log");
   for (let attempt = 0; attempt < 45; attempt += 1) {
     if (existsSync(logFile)) {
@@ -299,20 +290,33 @@ async function runSelfTest() {
   const rendered = renderEnvironment({ telegramToken: "t", allowedId: "1", apiKeyId: "ak_x", apiSecret: "a".repeat(64), subaccountId: "" });
   assert.match(rendered, /TRADING_MODE=live/);
   assert.match(rendered, /POLL_INTERVAL_MS=10000/);
-  print("Windows installer self-test passed.");
+  run("npm", ["--version"], "npm startup self-test");
+  print("Local installer self-test passed.");
 }
 
 async function main() {
   if (SELF_TEST) return runSelfTest();
-  if (process.platform !== "win32") fail("This installer is for local Windows installations.");
+  localPlatform();
   if (!nodeVersionIsSupported()) fail(`Node.js 22.12 or newer is required. Detected ${process.versions.node}.`);
 
   banner();
-  await showDisclaimer();
+  if (!VERIFY_INSTALL) await showDisclaimer();
   progress(5, "Installer accepted");
   assertTargetIsSafe();
   await copyApplication();
   progress(18, "Application files ready");
+
+  print("Installing dependencies — this may take a few minutes…");
+  run("npm", ["install", "--include=dev", "--no-audit", "--no-fund"], "Dependency installation");
+  progress(45, "Dependencies synchronized");
+  run("npm", ["run", "check"], "Code and test validation");
+  progress(60, "Type checks and tests passed");
+  run("npm", ["run", "build"], "Production build");
+  progress(75, "Production build ready");
+  if (VERIFY_INSTALL) {
+    print("Installation verification passed. No credentials read or written; no bot started.");
+    return;
+  }
 
   const envFile = path.join(TARGET_DIR, ".env");
   let keepExisting = existsSync(envFile) && !FORCE_RECONFIGURE;
@@ -333,19 +337,12 @@ async function main() {
   } else {
     config = { identity: await refreshExistingTelegramIdentity() };
   }
-  progress(32, keepExisting ? "Existing protected configuration preserved" : "Protected local configuration saved");
-
-  run("npm", ["install", "--no-audit", "--no-fund"], "Dependency installation");
-  progress(52, "Dependencies synchronized");
-  run("npm", ["run", "check"], "Code and test validation");
-  progress(70, "Type checks and tests passed");
-  run("npm", ["run", "build"], "Production build");
-  progress(82, "Production build ready");
+  progress(82, keepExisting ? "Existing protected configuration preserved" : "Protected local configuration saved");
   run(process.execPath, [path.join(TARGET_DIR, "dist", "tools", "private-read-smoke.js")], "Polyester balance/API policy validation");
   progress(89, "Polyester credentials and read policy accepted");
   run(process.execPath, [path.join(TARGET_DIR, "dist", "tools", "live-preview-smoke.js")], "Non-mutating live order preview validation");
   progress(94, "Trading preview permission accepted");
-  run(process.execPath, [path.join(TARGET_DIR, "scripts", "windows-manager.mjs"), "restart"], "Bot launch", { inherit: false });
+  run(process.execPath, [path.join(TARGET_DIR, "scripts", "local-manager.mjs"), "restart"], "Bot launch", { inherit: false });
   await waitForStarted();
   progress(100, "READY");
 

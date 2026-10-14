@@ -1,0 +1,6 @@
+[
+  "assets", "docs", "src", "tests", "dist", "node_modules", "data", ".runtime",
+  ".dockerignore", ".env.example", ".gitignore", "Dockerfile", "LICENSE", "NOTICE",
+  "README.md", "SECURITY.md", "docker-compose.yml", "install.sh", "manage.sh",
+  "package-lock.json", "package.json", "tsconfig.json", "scripts"
+]
