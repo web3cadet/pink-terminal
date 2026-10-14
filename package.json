@@ -1,6 +1,7 @@
 {
   "name": "polyester-telegram-terminal",
   "version": "0.1.0",
+  "license": "Apache-2.0",
   "private": true,
   "description": "Self-hosted Telegram trading terminal for Polyester testnet",
   "repository": {
@@ -26,6 +27,7 @@
     "install.sh",
     "manage.sh",
     "LICENSE",
+    "NOTICE",
     "README.md",
     "SECURITY.md",
     "tsconfig.json"
