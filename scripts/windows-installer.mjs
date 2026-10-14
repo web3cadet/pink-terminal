@@ -15,7 +15,7 @@ const args = new Set(process.argv.slice(2));
 const LOCAL_RUN = args.has("--local") || path.resolve(SOURCE_DIR) === path.resolve(TARGET_DIR);
 const FORCE_RECONFIGURE = args.has("--reconfigure");
 const SELF_TEST = args.has("--self-test");
-const PUBLIC_INSTALL_COMMAND = "npx --yes github:OWNER/REPOSITORY";
+const PUBLIC_INSTALL_COMMAND = "npx --yes github:web3cadet/polyester-community-trading-bot";
 
 const color = {
   pink: "\u001b[38;2;255;47;111m",

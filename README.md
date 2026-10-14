@@ -8,16 +8,16 @@ The project talks directly to Polyester's documented ConnectRPC JSON interface. 
 
 `install.sh` provides a terminal setup wizard that installs the host prerequisites, obtains the repository, validates the Telegram token, stores secrets in a local mode-`600` `.env`, builds the isolated Docker runtime, checks authenticated Polyester reads and a non-mutating live order preview, and waits for the Telegram bot to reach its started state.
 
-Until this folder is published to GitHub, run the wizard from the project directory:
+When working from an existing local checkout, run the wizard from the project directory:
 
 ```bash
 bash install.sh
 ```
 
-After publication, replace both placeholders below with the real repository owner and name. This will be the single public installation command:
+For a new Ubuntu or Debian VPS, use the public one-line installer:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/OWNER/REPOSITORY/main/install.sh | bash -s -- --repo https://github.com/OWNER/REPOSITORY.git
+curl -fsSL https://raw.githubusercontent.com/web3cadet/polyester-community-trading-bot/main/install.sh | bash -s -- --repo https://github.com/web3cadet/polyester-community-trading-bot.git
 ```
 
 The installer reads interactive answers directly from the terminal, so the wizard continues to work when the script is piped from `curl`. After installation, open the numeric management menu with `./manage.sh` to start, stop, restart, inspect status or logs, reconfigure, or update the bot. The installer never asks for a Polyester public key: the API Key ID and 32-byte private Ed25519 seed are sufficient.
@@ -27,10 +27,10 @@ The installer reads interactive answers directly from the terminal, so the wizar
 The Windows release uses a single cross-shell command in the integrated VS Code terminal. The user opens an empty folder and runs:
 
 ```text
-npx --yes github:OWNER/REPOSITORY
+npx --yes github:web3cadet/polyester-community-trading-bot
 ```
 
-Replace `OWNER/REPOSITORY` after the public repository is created. The package exposes `scripts/windows-installer.mjs` as its only executable, so `npx` downloads the release and immediately opens the guided installer. It preserves an existing `.env`, `data/`, `.runtime/` and installed dependencies during a source refresh, then synchronizes dependencies, runs the complete check suite, builds production output, validates authenticated reads and a non-mutating live preview, starts the Telegram bot in the background and prints its direct `t.me` URL.
+The package exposes `scripts/windows-installer.mjs` as its only executable, so `npx` downloads the current repository and immediately opens the guided installer. It preserves an existing `.env`, `data/`, `.runtime/` and installed dependencies during a source refresh, then synchronizes dependencies, runs the complete check suite, builds production output, validates authenticated reads and a non-mutating live preview, starts the Telegram bot in the background and prints its direct `t.me` URL.
 
 The wizard requests only the Telegram bot token, allowed numeric chat/user ID, Polyester API Key ID, matching 32-byte Ed25519 private seed, and optional subaccount ID. Secret fields are masked. It always configures the current release in LIVE testnet mode; transfer and withdrawal permissions are neither requested nor used.
 

@@ -2,10 +2,9 @@
 set -Eeuo pipefail
 
 # Polyester Trading Terminal installer for Ubuntu/Debian hosts.
-# Once the GitHub repository is public, set DEFAULT_REPOSITORY_URL below so the
-# raw install.sh URL is the only argument an operator needs.
+# Canonical public source used when the installer is launched without --repo.
 
-DEFAULT_REPOSITORY_URL=""
+DEFAULT_REPOSITORY_URL="https://github.com/web3cadet/polyester-community-trading-bot.git"
 REPOSITORY_URL="${POLYESTER_BOT_REPO_URL:-$DEFAULT_REPOSITORY_URL}"
 INSTALL_DIR="${POLYESTER_BOT_DIR:-$HOME/polyester-trading-terminal}"
 FORCE_RECONFIGURE=false
@@ -181,7 +180,7 @@ resolve_application() {
     return
   fi
 
-  [[ -n "$REPOSITORY_URL" ]] || die "Repository URL is not configured yet. Pass --repo https://github.com/OWNER/REPOSITORY.git"
+  [[ -n "$REPOSITORY_URL" ]] || die "Repository URL is not configured. Pass --repo https://github.com/web3cadet/polyester-community-trading-bot.git"
   [[ "$REPOSITORY_URL" =~ ^https://github\.com/[A-Za-z0-9._-]+/[A-Za-z0-9._-]+(\.git)?$ ]] \
     || die "--repo must be a public GitHub HTTPS repository URL."
 

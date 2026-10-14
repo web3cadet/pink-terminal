@@ -3,6 +3,13 @@
   "version": "0.1.0",
   "private": true,
   "description": "Self-hosted Telegram trading terminal for Polyester testnet",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/web3cadet/polyester-community-trading-bot.git"
+  },
+  "bugs": {
+    "url": "https://github.com/web3cadet/polyester-community-trading-bot/issues"
+  },
   "type": "module",
   "bin": {
     "polyester-terminal": "scripts/windows-installer.mjs"

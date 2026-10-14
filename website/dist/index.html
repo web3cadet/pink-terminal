@@ -1,0 +1,447 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="An independent community guide to self-hosting a Telegram trading terminal for Polyester testnet.">
+  <meta name="theme-color" content="#09070b">
+  <title>Community Guide — Telegram Terminal for Polyester Testnet</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <a class="skip-link" href="#content">Skip to guide</a>
+  <div class="scroll-progress" aria-hidden="true"><span id="scrollProgress"></span></div>
+
+  <header class="mobile-header">
+    <a class="mobile-brand" href="#overview" aria-label="Community terminal guide home">
+      <span class="community-mark" aria-hidden="true">♥</span>
+      <span><strong>Testnet Terminal</strong><small>Community guide</small></span>
+    </a>
+    <button class="menu-toggle" id="menuToggle" type="button" aria-expanded="false" aria-controls="sidebar">
+      <span></span><span></span><span></span><span class="sr-only">Open navigation</span>
+    </button>
+  </header>
+
+  <div class="site-shell">
+    <aside class="sidebar" id="sidebar">
+      <div class="sidebar-inner">
+        <a class="brand" href="#overview" aria-label="Community terminal guide home">
+          <span class="community-mark" aria-hidden="true">♥</span>
+          <span class="brand-copy"><strong>Testnet Terminal</strong><small>Community guide</small></span>
+        </a>
+
+        <div class="project-state">
+          <span class="status-dot"></span>
+          <span>Independent community build</span>
+        </div>
+
+        <div class="route-status" id="routeStatus" hidden>
+          <small>Your setup path</small>
+          <strong id="routeStatusLabel">Not selected</strong>
+          <a href="#setup-path">Change path</a>
+        </div>
+
+        <nav class="docs-nav" aria-label="Documentation">
+          <p class="nav-label">Getting started</p>
+          <a href="#overview" class="active">Overview</a>
+          <a href="#requirements">What you need</a>
+          <a href="#setup-path">Choose your setup</a>
+          <a href="#vps" data-route-only="vps">Choose a VPS</a>
+          <a href="#ssh" data-route-only="vps">Connect over SSH</a>
+
+          <p class="nav-label">Configuration</p>
+          <a href="#telegram">Telegram bot</a>
+          <a href="#api-key">Polyester API key</a>
+          <a href="#install">Install the terminal</a>
+          <a href="#verify">Verify the setup</a>
+
+          <p class="nav-label">Use &amp; maintain</p>
+          <a href="#trading">Start trading</a>
+          <a href="#manage">Manage your bot</a>
+          <a href="#security">Security</a>
+          <a href="#troubleshooting">Troubleshooting</a>
+          <a href="#faq">FAQ</a>
+        </nav>
+
+        <div class="sidebar-footer">
+          <a href="https://testnet.polyester.com" target="_blank" rel="noreferrer">Official Polyester testnet <span>↗</span></a>
+          <p>Reference link · opens the official site.</p>
+        </div>
+      </div>
+    </aside>
+    <button class="sidebar-overlay" id="sidebarOverlay" type="button" aria-label="Close navigation"></button>
+
+    <main id="content">
+      <section class="hero section" id="overview" data-title="Overview">
+        <div class="hero-meta">
+          <div class="eyebrow"><span></span> Independent community guide</div>
+          <span class="creator-signature" aria-label="Created by 099andr"><small>by</small><strong>099andr</strong></span>
+        </div>
+        <div class="hero-grid">
+          <div class="hero-copy">
+            <h1>Your own testnet<br><em>trading terminal.</em></h1>
+            <p class="lede">A practical guide to self-hosting a private Telegram interface for Polyester testnet. Your credentials remain on your server, and the bot never needs transfer or withdrawal permissions.</p>
+            <div class="hero-badges" aria-label="Project properties">
+              <span>Independent</span>
+              <span>Community-built</span>
+              <span>Testnet</span>
+            </div>
+            <div class="hero-actions">
+              <a class="button primary" href="#requirements">Start the guide <span>↓</span></a>
+              <a class="repo-link" href="https://github.com/web3cadet/polyester-community-trading-bot" target="_blank" rel="noreferrer">Source on GitHub ↗</a>
+            </div>
+          </div>
+
+          <div class="terminal-preview" aria-label="Example Telegram terminal interface">
+            <div class="terminal-top">
+              <div class="terminal-id">
+                <img src="assets/polyester-bot-avatar.png" alt="">
+                <div><strong>Polyester Terminal</strong><span>bot</span></div>
+              </div>
+              <span class="online">online</span>
+            </div>
+            <div class="terminal-body">
+              <p class="terminal-wordmark">💗 <strong>POLYESTER</strong></p>
+              <p>Terminal</p>
+              <p class="live"><span></span> Testnet · trading enabled</p>
+              <div class="terminal-rule"></div>
+              <small>PORTFOLIO</small>
+              <p>Estimated value: <strong>≈ 7,787.56 USDT</strong></p>
+              <p>Volume: <strong>3,455.42 USDT</strong></p>
+              <p>Open orders: <strong>4</strong></p>
+              <div class="terminal-buttons"><span>📈 Trading</span><span>💼 Balances</span></div>
+            </div>
+          </div>
+        </div>
+
+        <aside class="disclaimer-panel" role="note" aria-labelledby="disclaimer-title">
+          <div class="disclaimer-heading">
+            <span class="disclaimer-label">DISCLAIMER</span>
+            <div>
+              <h2 id="disclaimer-title">Independent community project</h2>
+              <p>This website and bot were created by a Polyester community member for educational and testnet purposes. They are not developed, operated, endorsed or supported by the Polyester team.</p>
+            </div>
+          </div>
+          <div class="disclaimer-points">
+            <div><span>01</span><p><strong>Open-source release</strong>The code can be inspected before it is installed or used.</p></div>
+            <div><span>02</span><p><strong>Self-hosted by design</strong>Each user runs a separate copy locally or on their own VPS.</p></div>
+            <div><span>03</span><p><strong>No secrets sent to the author</strong>Telegram tokens and Polyester signing keys remain in the user's own environment.</p></div>
+          </div>
+          <p class="disclaimer-footnote">Testnet assets have no monetary value. Review the source code, use a dedicated API key and proceed at your own risk.</p>
+        </aside>
+
+        <div class="concept-strip" aria-label="How the setup works">
+          <div><span>01</span><strong>Your Telegram</strong><small>Private control panel</small></div>
+          <i>→</i>
+          <div><span>02</span><strong>Your host</strong><small>Windows PC or Ubuntu VPS</small></div>
+          <i>→</i>
+          <div><span>03</span><strong>Polyester API</strong><small>Market and trading access</small></div>
+        </div>
+
+      </section>
+
+      <section class="section" id="requirements" data-title="What you need">
+        <div class="section-heading"><span>01</span><div><p>Before you begin</p><h2>What you need</h2></div></div>
+        <p>Every setup starts with the same three essentials. Then choose where the bot will run: continuously on an Ubuntu VPS, or locally on your Windows computer.</p>
+        <div class="check-grid">
+          <article><span>01</span><h3>A Telegram account</h3><p>Used to create and control your private bot.</p></article>
+          <article><span>02</span><h3>A Telegram bot token</h3><p>Created through the official BotFather account.</p></article>
+          <article><span>03</span><h3>A Polyester account</h3><p>With a dedicated testnet API key and policy.</p></article>
+        </div>
+        <div class="notice neutral"><strong>Keep these private:</strong><p>Telegram bot token, Polyester private key and VPS password. Never paste them into Discord, support chats, screenshots or a public repository.</p></div>
+
+        <div class="setup-path" id="setup-path">
+          <div class="setup-path-heading">
+            <p>Choose your setup</p>
+            <h3>Where should the bot run?</h3>
+            <span>You can change this later. The trading features are identical on both paths.</span>
+          </div>
+          <div class="route-grid">
+            <a class="route-card recommended" href="#vps" data-route-choice="vps" role="button" aria-pressed="false">
+              <div class="route-card-top"><span>01</span><b>Recommended for 24/7</b></div>
+              <h3>VPS <em>· Ubuntu</em></h3>
+              <p>The bot stays online when your own computer is switched off.</p>
+              <ul>
+                <li>Ubuntu 24.04 or 22.04</li>
+                <li>VPS account and public IP</li>
+                <li>MobaXterm or another SSH client</li>
+              </ul>
+              <strong class="route-action">Start the VPS path <span>→</span></strong>
+            </a>
+            <a class="route-card" href="#telegram" data-route-choice="local" role="button" aria-pressed="false">
+              <div class="route-card-top"><span>02</span><b>Best for a first local test</b></div>
+              <h3>Local <em>· Windows</em></h3>
+              <p>Run the bot from the VS Code terminal on your own computer.</p>
+              <ul>
+                <li>Windows 10 or 11</li>
+                <li>Node.js 22.12+ and Git</li>
+                <li>VS Code</li>
+              </ul>
+              <strong class="route-action">Start the local path <span>→</span></strong>
+            </a>
+          </div>
+          <div class="route-selection-note" id="routeSelectionNote" aria-live="polite">Choose a path to tailor the rest of this guide.</div>
+        </div>
+      </section>
+
+      <section class="section" id="vps" data-title="Choose a VPS" data-route-only="vps">
+        <div class="section-heading"><span>02</span><div><p>Server</p><h2>Choose a VPS</h2></div></div>
+        <p>A VPS is a small computer in a data center. It runs continuously, so your Telegram terminal remains available when your own PC is off.</p>
+        <div class="spec-panel">
+          <div><small>Operating system</small><strong>Ubuntu 24.04 LTS</strong><span>22.04 LTS is also supported</span></div>
+          <div><small>Comfortable starting point</small><strong>1 vCPU · 2 GB RAM</strong><span>10+ GB storage</span></div>
+          <div><small>Network</small><strong>Public IPv4</strong><span>Outbound HTTPS + SSH access</span></div>
+        </div>
+        <p class="fine-print">These are conservative starting specifications, not a measured minimum. Final resource usage should be benchmarked after the public release.</p>
+        <div class="steps compact">
+          <article><b>1</b><div><h3>Create the server</h3><p>Select Ubuntu 24.04 LTS (or 22.04 LTS) and a nearby region.</p></div></article>
+          <article><b>2</b><div><h3>Save the access details</h3><p>Copy the server IP, SSH username and password or private key.</p></div></article>
+          <article><b>3</b><div><h3>Protect the account</h3><p>Enable two-factor authentication with your VPS provider.</p></div></article>
+        </div>
+      </section>
+
+      <section class="section" id="ssh" data-title="Connect over SSH" data-route-only="vps">
+        <div class="section-heading"><span>03</span><div><p>Remote access</p><h2>Connect with MobaXterm</h2></div></div>
+        <p>On Windows, MobaXterm provides a simple SSH window. Download it only from the official website.</p>
+        <a class="source-link" href="https://mobaxterm.mobatek.net/" target="_blank" rel="noreferrer"><span>Official download</span><strong>mobaxterm.mobatek.net ↗</strong></a>
+        <div class="steps">
+          <article><b>1</b><div><h3>Create a session</h3><p>Open <strong>Session → SSH</strong>.</p></div></article>
+          <article><b>2</b><div><h3>Enter the server address</h3><p>Use the public IP from your VPS provider. Keep port <strong>22</strong> unless your provider specifies another.</p></div></article>
+          <article><b>3</b><div><h3>Set the username</h3><p>Usually <code>root</code> or <code>ubuntu</code>. Your provider will tell you which one applies.</p></div></article>
+          <article><b>4</b><div><h3>Verify and sign in</h3><p>Confirm the host fingerprint against your provider's control panel, then use the supplied password or SSH key.</p></div></article>
+        </div>
+        <div class="notice warning"><strong>Do not ignore a changed host fingerprint.</strong><p>If the warning appears unexpectedly, stop and verify the server identity with your VPS provider before connecting.</p></div>
+      </section>
+
+      <section class="section" id="telegram" data-title="Telegram bot">
+        <div class="section-heading"><span>04</span><div><p>Credentials</p><h2>Create your Telegram bot</h2></div></div>
+        <p>Your bot is created through Telegram's official <strong>@BotFather</strong>. The token it gives you is effectively the password for controlling that bot.</p>
+        <a class="source-link" href="https://t.me/BotFather" target="_blank" rel="noreferrer"><span>Open in Telegram</span><strong>@BotFather ↗</strong></a>
+        <div class="steps compact">
+          <article><b>1</b><div><h3>Start BotFather</h3><p>Check that the username is exactly <strong>@BotFather</strong> and that it is verified.</p></div></article>
+          <article><b>2</b><div><h3>Send <code>/newbot</code></h3><p>Choose a display name and a unique username ending in <code>bot</code>.</p></div></article>
+          <article><b>3</b><div><h3>Copy the token</h3><p>Save it temporarily in a private password manager. The installer will ask for it once.</p></div></article>
+          <article><b>4</b><div><h3>Find your numeric user ID</h3><p>The allowed user ID is a number, not your <code>@username</code>. Verify it carefully before saving the private configuration.</p></div></article>
+        </div>
+      </section>
+
+      <section class="section" id="api-key" data-title="Polyester API key">
+        <div class="section-heading"><span>05</span><div><p>Credentials</p><h2>Create a Polyester API key</h2></div></div>
+        <p>Create a dedicated key for the bot. Polyester uses an Ed25519 keypair: the public key is registered with your account while the private key stays on your server and signs requests locally.</p>
+        <div class="key-map">
+          <div><small>Installer needs</small><strong>API Key ID</strong><code>ak_…</code></div>
+          <div><small>Installer needs</small><strong>Private key seed</strong><code>32-byte hex secret</code></div>
+          <div class="muted"><small>Installer does not need</small><strong>Public key</strong><span>Already registered in Polyester</span></div>
+        </div>
+        <h3 class="subheading">Recommended policy</h3>
+        <div class="policy-table" role="table" aria-label="Recommended API permissions">
+          <div class="policy-row header" role="row"><span>Permission</span><span>Level</span><span>Why</span></div>
+          <div class="policy-row" role="row"><strong>Balances</strong><span class="pill read">Read</span><span>Portfolio display</span></div>
+          <div class="policy-row" role="row"><strong>Spot trading</strong><span class="pill write">Read + Write</span><span>Orders and fills</span></div>
+          <div class="policy-row" role="row"><strong>Transfers</strong><span class="pill none">None</span><span>Not used by the bot</span></div>
+          <div class="policy-row" role="row"><strong>Withdrawals</strong><span class="pill none">None</span><span>Not used by the bot</span></div>
+        </div>
+        <div class="notice good"><strong>Best practice:</strong><p>Use a dedicated key, set an expiry date and, when your host has a stable public IP, allowlist it as <code>YOUR_PUBLIC_IP/32</code>. Never grant withdrawal or transfer permissions.</p></div>
+        <div class="inline-links">
+          <a href="https://testnet.polyester.com/docs/user-docs/account/access-and-security/api-keys" target="_blank" rel="noreferrer">API key guide ↗</a>
+          <a href="https://testnet.polyester.com/docs/developer-docs/authentication-security" target="_blank" rel="noreferrer">Authentication docs ↗</a>
+        </div>
+      </section>
+
+      <section class="section" id="install" data-title="Install the terminal">
+        <div class="section-heading"><span>06</span><div><p>Deployment</p><h2>Install the terminal</h2></div></div>
+        <div class="route-prompt" id="routePrompt">
+          <strong>Choose your setup first</strong>
+          <p>The installation steps depend on where the bot will run.</p>
+          <a href="#setup-path">Choose VPS or local →</a>
+        </div>
+
+        <div class="route-content" data-route-content="vps">
+          <div class="path-banner"><span>Selected path</span><strong>VPS · Ubuntu</strong><a href="#setup-path">Change</a></div>
+          <p>This command downloads the public repository and opens an interactive setup wizard directly inside your SSH session.</p>
+          <div class="code-label"><span>Ubuntu terminal</span><span>One-line guided installer</span></div>
+          <div class="code-block">
+            <code>curl -fsSL https://raw.githubusercontent.com/web3cadet/polyester-community-trading-bot/main/install.sh | bash -s -- --repo https://github.com/web3cadet/polyester-community-trading-bot.git</code>
+            <button class="copy-button" type="button" data-copy="curl -fsSL https://raw.githubusercontent.com/web3cadet/polyester-community-trading-bot/main/install.sh | bash -s -- --repo https://github.com/web3cadet/polyester-community-trading-bot.git">Copy</button>
+          </div>
+          <div class="notice neutral"><strong>Review before running.</strong><p>The command reads <a href="https://github.com/web3cadet/polyester-community-trading-bot/blob/main/install.sh" target="_blank" rel="noreferrer"><code>install.sh</code> from GitHub ↗</a>. Inspect remote scripts before piping them into a shell.</p></div>
+          <h3 class="subheading">The installer will ask for</h3>
+          <ol class="installer-flow">
+            <li><span>01</span><div><strong>Risk acknowledgement</strong><p>Confirms that this is testnet software.</p></div></li>
+            <li><span>02</span><div><strong>Telegram credentials</strong><p>Bot token and allowed numeric user ID.</p></div></li>
+            <li><span>03</span><div><strong>Polyester credentials</strong><p>API Key ID and private signing seed.</p></div></li>
+            <li><span>04</span><div><strong>Validation and launch</strong><p>Builds the container, checks read access and starts the bot.</p></div></li>
+          </ol>
+          <p class="fine-print">Secrets are written to the VPS <code>.env</code> file with restricted permissions. They are not sent to a shared bot operator.</p>
+        </div>
+
+        <div class="route-content" data-route-content="local">
+          <div class="path-banner"><span>Selected path</span><strong>Local · Windows</strong><a href="#setup-path">Change</a></div>
+          <p>Create an empty folder, open that folder in VS Code, open the integrated terminal and paste one command. The installer handles the repository, dependencies, validation, private configuration and first launch.</p>
+          <div class="code-label"><span>VS Code terminal · Windows</span><span>One-line guided installer</span></div>
+          <div class="code-block">
+            <code>npx --yes github:web3cadet/polyester-community-trading-bot</code>
+            <button class="copy-button" type="button" data-copy="npx --yes github:web3cadet/polyester-community-trading-bot">Copy</button>
+          </div>
+          <div class="notice neutral"><strong>Runs from the public source.</strong><p>Review the <a href="https://github.com/web3cadet/polyester-community-trading-bot" target="_blank" rel="noreferrer">repository on GitHub ↗</a> before launching the guided installer.</p></div>
+          <h3 class="subheading">What happens automatically</h3>
+          <ol class="installer-flow">
+            <li><span>01</span><div><strong>Download or update</strong><p>Copies the current public release into the open folder while preserving <code>.env</code> and local data.</p></div></li>
+            <li><span>02</span><div><strong>Private setup wizard</strong><p>Asks for the Telegram token, allowed ID, API Key ID and private signing seed. Secret input is hidden.</p></div></li>
+            <li><span>03</span><div><strong>Install and verify</strong><p>Synchronizes dependencies, runs type checks and tests, builds production code and validates the Polyester API policy.</p></div></li>
+            <li><span>04</span><div><strong>Launch and open</strong><p>Shows a green progress bar, starts the bot in the background and prints its direct <code>t.me</code> link.</p></div></li>
+          </ol>
+          <div class="notice good"><strong>Nothing else to edit.</strong><p>After the final confirmation the installer creates the protected local <code>.env</code>, checks a non-mutating live order preview and launches the full LIVE testnet terminal.</p></div>
+          <p class="fine-print">Re-running the same one-line command updates the application and dependencies while preserving credentials and SQLite data. The bot still stops if Windows shuts down or sleeps; choose the VPS path for continuous availability.</p>
+        </div>
+      </section>
+
+      <section class="section" id="verify" data-title="Verify the setup">
+        <div class="section-heading"><span>07</span><div><p>First launch</p><h2>Verify before trading</h2></div></div>
+        <div class="verification-list">
+          <label><input type="checkbox"><span><strong>Open your bot and send <code>/start</code></strong><small>The main terminal should appear.</small></span></label>
+          <label><input type="checkbox"><span><strong>Check balances and markets</strong><small>Private balances and public market cards should load without errors.</small></span></label>
+          <label><input type="checkbox"><span><strong>Open one pair</strong><small>Confirm the chart, price and order book are updating.</small></span></label>
+          <label><input type="checkbox"><span><strong>Submit the smallest valid test order</strong><small>Review every field before confirmation.</small></span></label>
+          <label><input type="checkbox"><span><strong>Check the final order status</strong><small>“Order admitted” means accepted for processing — not necessarily filled.</small></span></label>
+        </div>
+      </section>
+
+      <section class="section" id="trading" data-title="Start trading">
+        <div class="section-heading"><span>08</span><div><p>Inside the bot</p><h2>Start trading</h2></div></div>
+        <p>The terminal combines account data and execution tools in one private Telegram interface.</p>
+        <div class="feature-list">
+          <article><span>01</span><div><h3>Live markets</h3><p>Discovered pairs, price movement, chart windows and order books with adaptive refresh.</p></div></article>
+          <article><span>02</span><div><h3>Market &amp; limit orders</h3><p>Buy by base amount or quote budget. Review the exact draft before signing.</p></div></article>
+          <article><span>03</span><div><h3>Orders &amp; fills</h3><p>Separate open orders from order history and inspect fill progress per order.</p></div></article>
+          <article><span>04</span><div><h3>Strategies</h3><p>Create testnet ladder strategies with explicit price ranges, levels and confirmation.</p></div></article>
+          <article><span>05</span><div><h3>Bot volume</h3><p>A local counter tracks filled notional produced through this installation.</p></div></article>
+        </div>
+        <div class="notice neutral"><strong>Execution rule:</strong><p>Always verify pair, side, amount, order type and limit price on the confirmation screen. The bot reduces friction; it does not remove trading risk.</p></div>
+      </section>
+
+      <section class="section" id="manage" data-title="Manage your bot">
+        <div class="section-heading"><span>09</span><div><p>Operations</p><h2>Manage your bot</h2></div></div>
+        <div class="route-prompt">
+          <strong>Choose your setup first</strong>
+          <p>Management controls depend on the selected runtime.</p>
+          <a href="#setup-path">Choose VPS or local →</a>
+        </div>
+        <div class="route-content" data-route-content="vps">
+          <p>Return to your SSH session and open the management menu from the project folder:</p>
+          <div class="code-label"><span>Ubuntu terminal</span><span>Interactive menu</span></div>
+          <div class="code-block short"><code>./manage.sh</code><button class="copy-button" type="button" data-copy="./manage.sh">Copy</button></div>
+          <div class="menu-grid">
+            <div><kbd>1</kbd><span><strong>Start</strong><small>Launch the bot</small></span></div>
+            <div><kbd>2</kbd><span><strong>Stop</strong><small>Graceful shutdown</small></span></div>
+            <div><kbd>3</kbd><span><strong>Restart</strong><small>Apply configuration</small></span></div>
+            <div><kbd>4</kbd><span><strong>Status</strong><small>Check health</small></span></div>
+            <div><kbd>5</kbd><span><strong>Logs</strong><small>Inspect recent output</small></span></div>
+            <div><kbd>6</kbd><span><strong>Configure</strong><small>Update credentials</small></span></div>
+            <div><kbd>7</kbd><span><strong>Update</strong><small>Pull a new release</small></span></div>
+          </div>
+        </div>
+        <div class="route-content" data-route-content="local">
+          <p>The installer starts the bot as a local background process. Open the interactive manager from the same project folder:</p>
+          <div class="code-label"><span>VS Code terminal · Windows</span><span>Interactive manager</span></div>
+          <div class="code-block short"><code>npm run manage</code><button class="copy-button" type="button" data-copy="npm run manage">Copy</button></div>
+          <div class="local-controls">
+            <div><span>Start</span><code>npm run bot:start</code></div>
+            <div><span>Stop</span><code>npm run bot:stop</code></div>
+            <div><span>Restart</span><code>npm run bot:restart</code></div>
+            <div><span>Status</span><code>npm run bot:status</code></div>
+            <div><span>Recent logs</span><code>npm run bot:logs</code></div>
+            <div><span>Update</span><code>re-run installer</code></div>
+          </div>
+          <div class="notice neutral"><strong>Restart is separate from install.</strong><p>Use <code>npm run bot:restart</code> after an ordinary interruption. Re-run the one-line installer only when you want to update the code or dependencies; it detects and preserves the existing private configuration.</p></div>
+        </div>
+      </section>
+
+      <section class="section" id="security" data-title="Security">
+        <div class="section-heading"><span>10</span><div><p>Non-negotiables</p><h2>Security</h2></div></div>
+        <div class="security-grid">
+          <article><span>✓</span><h3>Use a dedicated API key</h3><p>Do not reuse a key from another app or environment.</p></article>
+          <article><span>✓</span><h3>Keep permissions minimal</h3><p>Balances and spot trading only. No transfers or withdrawals.</p></article>
+          <article><span>✓</span><h3>Restrict access</h3><p>One allowed Telegram ID and, where possible, one VPS IP.</p></article>
+          <article><span>✓</span><h3>Keep secrets off-screen</h3><p>Never share <code>.env</code>, tokens, private keys or logs containing them.</p></article>
+          <article><span>✓</span><h3>Keep the host updated</h3><p>Apply operating-system, Node.js and dependency security updates.</p></article>
+          <article><span>✓</span><h3>Rotate after exposure</h3><p>Revoke compromised credentials first; do not merely delete a message.</p></article>
+        </div>
+      </section>
+
+      <section class="section" id="troubleshooting" data-title="Troubleshooting">
+        <div class="section-heading"><span>11</span><div><p>Common problems</p><h2>Troubleshooting</h2></div></div>
+        <div class="trouble-list">
+          <details><summary><code>api_key_policy_required</code><span>+</span></summary><div><p>The API key exists, but the required policy is missing. In Polyester, attach balance read and spot trading permissions, save, then restart the bot.</p></div></details>
+          <details><summary><code>TIMESTAMP_SKEW</code><span>+</span></summary><div><p>The VPS clock differs too much from the API. Enable automatic time synchronization, verify the clock, then retry.</p></div></details>
+          <details><summary><code>SIGNATURE_INVALID</code><span>+</span></summary><div><p>The Key ID and private signing seed do not belong to the same API key, or the secret was copied incorrectly. Reconfigure both values together.</p></div></details>
+          <details><summary><code>IP_NOT_ALLOWED</code><span>+</span></summary><div><p>The key's IP allowlist does not include the VPS public IP. Add the exact server address as <code>/32</code> or correct the existing entry.</p></div></details>
+          <details><summary>Balances are empty or incomplete<span>+</span></summary><div><p>Check whether assets are in the trading account rather than the funding account, and confirm the key has balance-read permission.</p></div></details>
+          <details><summary>The bot does not answer<span>+</span></summary><div><p>Confirm that your numeric Telegram ID is allowed, then open <code>./manage.sh</code> and check Status and Logs.</p></div></details>
+        </div>
+      </section>
+
+      <section class="section" id="faq" data-title="FAQ">
+        <div class="section-heading"><span>12</span><div><p>Short answers</p><h2>Frequently asked questions</h2></div></div>
+        <div class="faq-grid">
+          <article><h3>Is this a mainnet bot?</h3><p>No. The current build and this guide are for Polyester testnet.</p></article>
+          <article><h3>Is it an official Polyester product?</h3><p>No. It is an independent, community-built open-source interface.</p></article>
+          <article><h3>Does the installer need my public key?</h3><p>No. It needs the <code>ak_…</code> Key ID and matching private signing seed. The public key is already registered in Polyester.</p></article>
+          <article><h3>Can I run it on my own PC?</h3><p>Yes, but it stops when the PC sleeps or disconnects. A VPS is better for continuous access.</p></article>
+          <article><h3>Does the developer receive my keys?</h3><p>No. In the self-hosted model, credentials stay in the local server configuration you control.</p></article>
+          <article><h3>Can the bot withdraw funds?</h3><p>It is not designed to. Do not grant withdrawal or transfer permissions.</p></article>
+        </div>
+        <div class="next-card">
+          <span>Source &amp; installation</span>
+          <h2>Read the code, report an issue, or install the terminal from the public repository.</h2>
+          <a href="https://github.com/web3cadet/polyester-community-trading-bot" target="_blank" rel="noreferrer">Open GitHub repository ↗</a>
+        </div>
+      </section>
+
+      <footer>
+        <div><span class="community-mark" aria-hidden="true">♥</span><span>Independent Community Guide</span></div>
+        <p>Made for people exploring Polyester testnet. Not affiliated with, endorsed by or operated by Polyester. Not financial advice.</p>
+        <nav aria-label="Official resources">
+          <a href="https://github.com/web3cadet/polyester-community-trading-bot" target="_blank" rel="noreferrer">GitHub repository</a>
+          <a href="https://testnet.polyester.com" target="_blank" rel="noreferrer">Testnet</a>
+          <a href="https://testnet.polyester.com/docs/developer-docs/getting-started" target="_blank" rel="noreferrer">Developer docs</a>
+          <a href="https://docs.docker.com/engine/install/ubuntu/" target="_blank" rel="noreferrer">Docker on Ubuntu</a>
+        </nav>
+        <small>© <span id="year"></span> Community documentation.</small>
+      </footer>
+    </main>
+
+    <aside class="right-rail" aria-label="On this page">
+      <div class="rail-card">
+        <p>ON THIS PAGE</p>
+        <nav id="pageNav">
+          <a href="#overview" class="active">Overview</a>
+          <a href="#requirements">Requirements</a>
+          <a href="#vps" data-route-only="vps">VPS &amp; SSH</a>
+          <a href="#telegram">Credentials</a>
+          <a href="#install">Install</a>
+          <a href="#verify">Verify</a>
+          <a href="#trading">Trading</a>
+          <a href="#security">Security</a>
+          <a href="#troubleshooting">Troubleshooting</a>
+        </nav>
+      </div>
+      <div class="rail-card checklist">
+        <p>QUICK CHECK</p>
+        <span data-route-only="vps"><i></i> Ubuntu VPS</span>
+        <span data-route-only="vps"><i></i> SSH client</span>
+        <span data-route-only="local"><i></i> Windows 10 / 11</span>
+        <span data-route-only="local"><i></i> Node.js 22.12+</span>
+        <span><i></i> Telegram token</span>
+        <span><i></i> Numeric user ID</span>
+        <span><i></i> API Key ID</span>
+        <span><i></i> Private signing seed</span>
+      </div>
+      <a class="rail-source" href="https://testnet.polyester.com/docs/developer-docs/getting-started" target="_blank" rel="noreferrer">Official developer docs <span>↗</span></a>
+    </aside>
+  </div>
+
+  <div class="toast" id="toast" role="status" aria-live="polite">Copied to clipboard</div>
+  <script src="app.js"></script>
+</body>
+</html>

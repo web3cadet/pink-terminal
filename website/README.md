@@ -27,12 +27,9 @@ Import the repository and set the project root to `website`. The included `verce
 
 Import the repository and set the base directory to `website`. The included `netlify.toml` publishes `dist`.
 
-## Before public release
+## Release maintenance
 
-1. Replace both `OWNER/REPOSITORY` placeholders in `dist/index.html` with the published GitHub repository.
-2. Finalize the first-party method for finding the user's numeric Telegram ID.
-3. Recheck the recommended Polyester API policy against the current testnet UI.
-4. Test the one-command installer on a clean supported Ubuntu VPS.
-5. Replace “coming soon” repository text with the real link.
-
-Do not add real API keys, Telegram tokens or server credentials to this folder.
+1. Keep repository and installer links aligned with `web3cadet/polyester-community-trading-bot`.
+2. Recheck the recommended Polyester API policy against the current testnet UI.
+3. Test the one-command installer on clean supported Windows and Ubuntu environments before tagged releases.
+4. Never add real API keys, Telegram tokens or server credentials to this folder.
