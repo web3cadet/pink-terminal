@@ -1,0 +1,60 @@
+{
+  "name": "polyester-telegram-terminal",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Self-hosted Telegram trading terminal for Polyester testnet",
+  "type": "module",
+  "bin": {
+    "polyester-terminal": "scripts/windows-installer.mjs"
+  },
+  "files": [
+    "assets",
+    "docs",
+    "scripts",
+    "src",
+    "tests",
+    "website",
+    ".env.example",
+    "docker-compose.yml",
+    "Dockerfile",
+    "install.sh",
+    "manage.sh",
+    "LICENSE",
+    "README.md",
+    "SECURITY.md",
+    "tsconfig.json"
+  ],
+  "engines": {
+    "node": ">=22.12"
+  },
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "start": "node --enable-source-maps dist/index.js",
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "check": "npm run typecheck && npm test",
+    "setup:windows": "node scripts/windows-installer.mjs --local",
+    "manage": "node scripts/windows-manager.mjs",
+    "bot:start": "node scripts/windows-manager.mjs start",
+    "bot:stop": "node scripts/windows-manager.mjs stop",
+    "bot:restart": "node scripts/windows-manager.mjs restart",
+    "bot:status": "node scripts/windows-manager.mjs status",
+    "bot:logs": "node scripts/windows-manager.mjs logs",
+    "smoke:public": "tsx src/tools/public-smoke.ts",
+    "smoke:private-read": "tsx src/tools/private-read-smoke.ts",
+    "smoke:live-preview": "tsx src/tools/live-preview-smoke.ts"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.7",
+    "grammy": "^1.35.0",
+    "zod": "^3.24.2"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.10",
+    "tsx": "^4.19.3",
+    "typescript": "^5.8.2",
+    "vitest": "^5.0.4"
+  }
+}
