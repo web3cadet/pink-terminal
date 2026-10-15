@@ -97,7 +97,7 @@ export function createTelegramBot(deps: {
             : `<b>Enter the quantity of ${base} to ${sell ? "sell" : "buy"}.</b>`,
           quote ? `For example, 100 = ${sell ? "sell" : "buy"} about 100 ${currency} worth of ${base}, before Fee.` : `For example, 1 = 1 ${base}.`,
           `Or send a percentage, e.g. <b>10%</b> of your available <b>${sell ? base : currency}</b> ${sell ? "to sell" : "to spend"}.`,
-          sell ? "Percentages always sell a share of your token balance, even in quote-value mode." : "Fee is additional. Leave funds for Fee when buying, including with percentages.",
+          sell ? "Percentages always sell a share of your token balance, even in quote-value mode." : "For percentages, Fee is included in the budget: 100% uses available funds. For an exact amount, Fee is additional.",
           "", orderMinimums(pair), "", "Send an amount or percentage in this chat."
         ].join("\n")
     ].join("\n");
@@ -187,7 +187,7 @@ export function createTelegramBot(deps: {
         pair ? await orderBalances(gateway, pair) : "Balances unavailable",
         "",
         ...(pair && draft.quoteAmount && draft.sizingPrice ? [
-          `Entered: <b>${escapeHtml(draft.quoteAmount)} ${escapeHtml(pair.quoteAsset)}</b> before Fee`,
+          `Entered: <b>${escapeHtml(draft.quoteAmount)} ${escapeHtml(pair.quoteAsset)}</b> ${draft.balancePercent && draft.side === "BUY" ? "including Fee" : "before Fee"}`,
           `Sizing price: <b>${escapeHtml(draft.sizingPrice)} ${escapeHtml(pair.quoteAsset)}</b> per ${escapeHtml(pair.baseAsset)}`,
           `Calculated quantity: <b>${escapeHtml(draft.qty ?? "—")} ${escapeHtml(pair.baseAsset)}</b>`,
           ""
@@ -375,7 +375,7 @@ export function createTelegramBot(deps: {
       "<b>Quote value</b> — enter the trade value in the pair's quote currency: USDT, USDC or another asset.",
       "<b>Token quantity</b> — enter how many base tokens to buy or sell, such as ETH in ETH/USDC.", "",
       "<b>Percentages work in both modes</b>",
-      "Buy: % of the available payment asset. Fee is additional.",
+      "Buy: % of the available payment asset, including Fee. Exact amounts exclude Fee.",
       "Sell: % of the available token being sold.",
       "Amounts are fixed when entered; market prices may change before execution."
     ].join("\n"), new InlineKeyboard().text("Order confirmation", "configuration:confirmation").row()

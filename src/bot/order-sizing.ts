@@ -1,5 +1,6 @@
 import type { ExchangeGateway, OrderDraft, PairConfig } from "../domain.js";
-import { decimalToScaled, scaledToDecimal } from "../utils/decimal.js";
+import { decimalToScaled, scaledToDecimal, multiplyDecimals, quantityForQuote } from "../utils/decimal.js";
+export { quantityForQuote } from "../utils/decimal.js";
 import { positiveInput } from "./presentation.js";
 
 /** Snapshot available funds at input time; percentages always follow the spend asset. */
@@ -36,20 +37,18 @@ export async function applyOrderAmountInput(gateway: ExchangeGateway, pair: Pair
   if (percent !== undefined) { draft.balancePercent = percent; draft.percentageAsset = asset!; draft.percentageBalance = balance!; }
 }
 
-/** Floor amount / price to a whole number of quantity steps, without floats. */
-export function quantityForQuote(amount: string, price: string, step: string): string {
-  const scale = (value: string) => value.split(".")[1]?.length ?? 0;
-  const a = BigInt(decimalToScaled(amount, scale(amount)));
-  const p = BigInt(decimalToScaled(price, scale(price)));
-  const s = BigInt(decimalToScaled(step, scale(step)));
-  if (a <= 0n || p <= 0n || s <= 0n) throw new Error("Amount, price and quantity step must be positive.");
-  const steps = a * 10n ** BigInt(scale(price) + scale(step)) / (p * s * 10n ** BigInt(scale(amount)));
-  if (steps === 0n) throw new Error("This amount is below one quantity step. Enter a larger amount.");
-  return scaledToDecimal(steps * s, scale(step));
-}
-
 export async function resolveQuoteAmount(gateway: ExchangeGateway, pair: PairConfig, draft: OrderDraft): Promise<void> {
   if (!draft.quoteAmount) return; // Preserve existing base-quantity and legacy budget orders.
+  const percentageBuy = draft.side === "BUY" && draft.balancePercent !== undefined;
+  const quoteUnit = percentageBuy ? scaledToDecimal(1n, pair.quoteQuantityScale) : "1";
+  const budget = percentageBuy ? quantityForQuote(draft.quoteAmount, "1", quoteUnit) : draft.quoteAmount;
+  if (percentageBuy && (draft.kind === "MARKET_IOC" || draft.kind === "LIMIT_IOC")) {
+    // Native all-in sizing lets the exchange account for fees and the protected
+    // execution price. Never also send baseQty: it would replace this ceiling.
+    draft.maxQuoteDebit = budget;
+    delete draft.qty; delete draft.sizingPrice;
+    return;
+  }
   let price = draft.price;
   if (draft.kind === "MARKET_IOC") {
     const market = (await gateway.listMarketOverview()).find(item => item.symbolId === pair.symbolId);
@@ -58,7 +57,23 @@ export async function resolveQuoteAmount(gateway: ExchangeGateway, pair: PairCon
   if (!price || !/^(0|[1-9]\d*)(?:\.\d+)?$/.test(price) || !/[1-9]/.test(price)) {
     throw new Error("A current execution price is unavailable. Try again or enter the token quantity instead.");
   }
-  const qty = quantityForQuote(draft.quoteAmount, price, pair.stepSize);
+  let sizingAmount = budget, sizingPrice = price;
+  if (percentageBuy) {
+    // Resting/FOK orders do not support native quote budgets. Reserve the larger
+    // current maker/taker fee; never assume VIP 0 or spend rebates in advance.
+    const rates = await gateway.getSpotFeeRates?.(pair.symbolId);
+    if (!rates || ![rates.maker, rates.taker].every(value => /^-?(0|[1-9]\d*)(?:\.\d+)?$/.test(value))) {
+      throw new Error("Fee rates are unavailable. Try again before using a buy percentage.");
+    }
+    const scale = Math.max(...[rates.maker, rates.taker].map(value => value.split(".")[1]?.length ?? 0));
+    const values = [rates.maker, rates.taker].map(value => value.startsWith("-") ? 0n : BigInt(decimalToScaled(value, scale)));
+    const rate = values[0]! > values[1]! ? values[0]! : values[1]!;
+    const factor = scaledToDecimal(100n * 10n ** BigInt(scale) + rate, scale + 2);
+    sizingPrice = multiplyDecimals(price, factor);
+    // One quote quantum covers upward fee rounding at the exchange.
+    if (rate > 0n) sizingAmount = scaledToDecimal(BigInt(decimalToScaled(budget, pair.quoteQuantityScale)) - 1n, pair.quoteQuantityScale);
+  }
+  const qty = quantityForQuote(sizingAmount, sizingPrice, pair.stepSize);
   draft.qty = qty;
   draft.sizingPrice = price;
   delete draft.maxQuoteDebit;

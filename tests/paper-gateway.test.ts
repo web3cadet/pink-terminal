@@ -16,6 +16,14 @@ const catalog: SpotCatalog = {
 const publicGateway = { getCatalog: async () => catalog } as unknown as ExchangeGateway;
 
 describe("paper gateway state", () => {
+  it("does not label quote-budget units as base tokens", async () => {
+    const gateway = new PaperGateway({ ...publicGateway, listMarketOverview: async () => [{ symbolId: 1, bestAsk: "50000" }] } as ExchangeGateway);
+    const draft = { symbolId: 1, symbol: "BTC-USDT", side: "BUY", kind: "MARKET_IOC", maxQuoteDebit: "100" } as const;
+    expect(await gateway.getSpotFeeRates()).toEqual({ maker: "0", taker: "0" });
+    expect((await gateway.previewOrder(draft, "preview")).resolvedBaseQty).toBe("0.002");
+    const receipt = await gateway.createOrder(draft, "budget");
+    expect((await gateway.getOrderDetails(receipt.orderId!))?.order.totalQty).toBe("0.002");
+  });
   it("uses the fixed 18-decimal ledger scale", async () => {
     const gateway = new PaperGateway(publicGateway);
     expect((await gateway.listBalances())[0]?.available).toBe("1000000000000000000000");

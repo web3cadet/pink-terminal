@@ -94,7 +94,7 @@ export interface OrderDraft {
   kind: OrderKind;
   qty?: string;
   maxQuoteDebit?: string;
-  /** UI sizing only; the exchange receives the resolved, step-aligned qty. */
+  /** UI sizing: exact pre-fee value, or an all-in budget for percentage buys. */
   quoteAmount?: string;
   sizingPrice?: string;
   /** Frozen balance percentage; never recalculated when confirmation is clicked. */

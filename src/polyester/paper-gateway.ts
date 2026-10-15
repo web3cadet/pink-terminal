@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { quantityForQuote } from "../utils/decimal.js";
 import type {
   Balance, Candle, ExchangeGateway, MarketOverview, OrderDetails, OrderDraft, OrderPreview, OrderReceipt, OrderSummary,
   Orderbook, SpotCatalog, TriggerDraft, TriggerSummary
@@ -14,6 +15,7 @@ export class PaperGateway implements ExchangeGateway {
   listMarketOverview(): Promise<MarketOverview[]> { return this.publicGateway.listMarketOverview(); }
   getOrderbook(symbolId: number, depth?: number): Promise<Orderbook> { return this.publicGateway.getOrderbook(symbolId, depth); }
   getCandles(symbolId: number, timeframe: string, limit?: number): Promise<Candle[]> { return this.publicGateway.getCandles(symbolId, timeframe, limit); }
+  async getSpotFeeRates(): Promise<{ maker: string; taker: string }> { return { maker: "0", taker: "0" }; }
 
   async listBalances(): Promise<Balance[]> {
     const catalog = await this.getCatalog();
@@ -27,15 +29,25 @@ export class PaperGateway implements ExchangeGateway {
   }
 
   async previewOrder(draft: OrderDraft, _clientOrderId: string): Promise<OrderPreview> {
-    return { admissible: true, raw: { paper: true, draft } };
+    return { admissible: true, resolvedBaseQty: await this.resolveQuantity(draft), raw: { paper: true, draft } };
+  }
+
+  private async resolveQuantity(draft: OrderDraft): Promise<string> {
+    if (draft.qty) return draft.qty;
+    if (!draft.maxQuoteDebit || draft.side !== "BUY" || !["MARKET_IOC", "LIMIT_IOC"].includes(draft.kind)) throw new Error("Unsupported paper order budget");
+    const pair = (await this.getCatalog()).pairs.find(p => p.symbolId === draft.symbolId);
+    const price = draft.kind === "LIMIT_IOC" ? draft.price : (await this.listMarketOverview()).find(m => m.symbolId === draft.symbolId)?.bestAsk;
+    if (!pair || !price) throw new Error("A current execution price is unavailable for this paper order");
+    return quantityForQuote(draft.maxQuoteDebit, price, pair.stepSize);
   }
 
   async createOrder(draft: OrderDraft, clientOrderId: string): Promise<OrderReceipt> {
+    const qty = await this.resolveQuantity(draft);
     const orderId = `paper-${randomUUID().slice(0, 8)}`;
     this.orders.unshift({
       orderId, clientOrderId, symbolId: draft.symbolId, side: draft.side, status: "PAPER_ACCEPTED",
       ...(draft.price ? { price: draft.price } : {}),
-      ...(draft.qty ?? draft.maxQuoteDebit ? { qty: draft.qty ?? draft.maxQuoteDebit!, totalQty: draft.qty ?? draft.maxQuoteDebit!, leavesQty: draft.qty ?? draft.maxQuoteDebit! } : {}),
+      qty, totalQty: qty, leavesQty: qty,
       cumulativeQty: "0", orderType: draft.kind, createdAt: new Date().toISOString(), raw: { paper: true, draft }
     });
     return { orderId, clientOrderId, acceptedAt: new Date().toISOString(), status: "paper", raw: { paper: true } };

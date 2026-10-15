@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { applyOrderAmountInput, resolveQuoteAmount } from "../src/bot/order-sizing.js";
 import type { ExchangeGateway, OrderDraft, PairConfig } from "../src/domain.js";
 
-const pair = { symbolId: 1, symbol: "ETH-USDC", baseAsset: "ETH", quoteAsset: "USDC", stepSize: "0.001" } as PairConfig;
+const pair = { symbolId: 1, symbol: "ETH-USDC", baseAsset: "ETH", quoteAsset: "USDC", stepSize: "0.001", quoteQuantityScale: 6 } as PairConfig;
 const gateway = {
   getCatalog: async () => ({ assets: [{ asset: "ETH", ledgerId: 1 }, { asset: "USDC", ledgerId: 2 }] }),
   listBalances: async () => [{ assetId: 1, available: "412383096000000000000", reserved: "990000000000000000000" }, { assetId: 2, available: "500000000000000000000" }],
@@ -20,10 +20,11 @@ describe("percentage sizing safety", () => {
     const d = draft(); await applyOrderAmountInput(gateway, pair, d, "100%", "base");
     expect(d.qty).toBe("412.383");
   });
-  it("a 10% buy spends 50 of 500 quote units regardless of configured number units", async () => {
+  it("a 10% buy budgets 50 of 500 quote units including Fee regardless of configured units", async () => {
     for (const mode of ["base", "quote"] as const) {
       const d = draft("BUY"); await applyOrderAmountInput(gateway, pair, d, "10%", mode);
-      expect(d.quoteAmount).toBe("50"); await resolveQuoteAmount(gateway, pair, d); expect(d.qty).toBe("2");
+      expect(d.quoteAmount).toBe("50"); await resolveQuoteAmount(gateway, pair, d);
+      expect(d.maxQuoteDebit).toBe("50"); expect(d.qty).toBeUndefined();
     }
   });
   it.each(["0%", "-1%", "100.0001%", "NaN%", "1e2%", "10%%", "%", "0.000000000000000000001%"])("rejects invalid/zero-sized %s atomically", async input => {

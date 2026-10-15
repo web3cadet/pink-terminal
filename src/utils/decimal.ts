@@ -1,5 +1,17 @@
 const DECIMAL_RE = /^(0|[1-9]\d*)(?:\.(\d+))?$/;
 
+/** Floor amount / price to a whole number of quantity steps, without floats. */
+export function quantityForQuote(amount: string, price: string, step: string): string {
+  const scale = (value: string) => value.split(".")[1]?.length ?? 0;
+  const a = BigInt(decimalToScaled(amount, scale(amount)));
+  const p = BigInt(decimalToScaled(price, scale(price)));
+  const s = BigInt(decimalToScaled(step, scale(step)));
+  if (a <= 0n || p <= 0n || s <= 0n) throw new Error("Amount, price and quantity step must be positive.");
+  const steps = a * 10n ** BigInt(scale(price) + scale(step)) / (p * s * 10n ** BigInt(scale(amount)));
+  if (steps === 0n) throw new Error("This amount is below one quantity step. Enter a larger amount.");
+  return scaledToDecimal(steps * s, scale(step));
+}
+
 export function decimalToScaled(value: string, scale: number): string {
   const trimmed = value.trim();
   const match = DECIMAL_RE.exec(trimmed);

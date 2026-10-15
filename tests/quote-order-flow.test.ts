@@ -272,7 +272,10 @@ describe("configured units and balance percentages through the full order wizard
         expect(f.createOrder).not.toHaveBeenCalled();
         const id = f.confirmId();
         const intent = f.db.getIntent(id.slice("confirm:o:".length))!;
-        expect(intent.payload).toMatchObject({ balancePercent: "10", percentageAsset: side === "BUY" ? quote : "ETH", percentageBalance: side === "BUY" ? "500" : "40", qty: side === "SELL" ? "4" : kind === "MARKET_IOC" ? "2" : "2.5" });
+        expect(intent.payload).toMatchObject({ balancePercent: "10", percentageAsset: side === "BUY" ? quote : "ETH", percentageBalance: side === "BUY" ? "500" : "40" });
+        const nativeBudget = side === "BUY" && (kind === "MARKET_IOC" || kind === "LIMIT_IOC");
+        expect(intent.payload.qty).toBe(nativeBudget ? undefined : side === "SELL" ? "4" : "2.496");
+        expect(intent.payload.maxQuoteDebit).toBe(nativeBudget ? "50" : undefined);
         expect(intent.payload.quoteAmount).toBe(side === "BUY" ? "50" : undefined);
         expect(String(f.lastPanel().payload.text)).toContain(`Balance share: <b>10%</b> of available ${side === "BUY" ? quote : "ETH"}`);
         await f.callback(id);
@@ -294,7 +297,7 @@ describe("configured units and balance percentages through the full order wizard
       });
     }
   }
-  it("blocks a rejected 100% buy without silently reducing the order or submitting", async () => {
+  it("still blocks a rejected 100% budget without retrying or submitting", async () => {
     const f = setup("BUY", "MARKET_IOC");
     f.db.setOrderConfirmation(1, 1, confirmationAccountContext(f.config), false);
     f.previewOrder.mockResolvedValueOnce({ admissible: false, rejectionCode: "ERROR_CODE_INSUFFICIENT_FUNDS", raw: {} } as never);
