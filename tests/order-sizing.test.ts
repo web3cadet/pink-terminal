@@ -6,6 +6,18 @@ import type { ExchangeGateway, OrderDraft, PairConfig } from "../src/domain.js";
 const pair = { symbolId: 1, symbol: "BNB-USDT", stepSize: "0.001" } as PairConfig;
 const gateway = { listMarketOverview: async () => [{ symbolId: 1, bestAsk: "500", bestBid: "400" }] } as unknown as ExchangeGateway;
 describe("quote-value order sizing", () => {
+  it("does not assume that a testnet stablecoin trades at one USDT", async () => {
+    const p = { ...pair, symbol: "USDC-USDT", stepSize: "0.000001" };
+    const g = { listMarketOverview: async () => [{ symbolId: 1, bestBid: "0.82" }] } as unknown as ExchangeGateway;
+    const draft = { symbolId: 1, symbol: p.symbol, side: "SELL", kind: "MARKET_IOC", quoteAmount: "412" } as OrderDraft;
+    await resolveQuoteAmount(g, p, draft);
+    expect(draft.qty).toBe("502.439024");
+    expect(draft.sizingPrice).toBe("0.82");
+    const exact = { symbolId: 1, symbol: p.symbol, side: "SELL", kind: "MARKET_IOC", qty: "412" } as OrderDraft;
+    await resolveQuoteAmount(g, p, exact);
+    expect(exact.qty).toBe("412");
+    expect(exact.quoteAmount).toBeUndefined();
+  });
   it("divides and floors to steps exactly, including large and tiny decimals", () => {
     expect(quantityForQuote("100", "500", "0.001")).toBe("0.2");
     expect(quantityForQuote("5", "0.07324", "0.000001")).toBe("68.268705");

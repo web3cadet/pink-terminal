@@ -8,7 +8,7 @@ import type { TradingService } from "../src/services/trading.js";
 
 function deferred() { let resolve!: () => void; const promise = new Promise<void>(r => { resolve = r; }); return { promise, resolve }; }
 describe("single-click navigation during live updates", () => {
-  it.each(["snapshot", "edit", "slow data", "unchanged"])("handles %s without needing a second click", async stage => {
+  it.each(["snapshot", "edit", "slow data", "unchanged", "fast data"])("handles %s without needing a second click", async stage => {
     vi.useFakeTimers();
     const db = new AppDatabase(":memory:");
     const gate = deferred(), entered = deferred();
@@ -38,9 +38,15 @@ describe("single-click navigation during live updates", () => {
     const click = (data: string) => bot.handleUpdate({ update_id: ++updateId, callback_query: { id: String(updateId), chat_instance: "1", from: { id: 1, is_bot: false, first_name: "Test" }, data, message: { message_id: 100, date: 1, chat: { id: 1, type: "private" }, text: "panel" } } });
     try {
       await click("markets:0");
+      if (stage === "fast data") {
+        await click("pair:1");
+        expect(applied.filter(text => text.includes("Opening market"))).toHaveLength(0);
+        expect(applied.filter(text => text.includes("Market overview"))).toHaveLength(1);
+        return;
+      }
       if (stage === "slow data") {
         const selected = click("pair:1");
-        await entered.promise; await vi.advanceTimersByTimeAsync(0);
+        await entered.promise; await vi.advanceTimersByTimeAsync(350);
         expect(applied.at(-1)).toContain("Opening market");
         expect(listBalances).toHaveBeenCalledOnce(); // Balance loads alongside the slow chart, not after it.
         await click("pair:1"); // A duplicate tap is acknowledged, but must not enqueue another fetch.

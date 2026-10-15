@@ -170,6 +170,12 @@ export function createTelegramBot(deps: {
         pair ? pairLink(pair.symbol) : "",
         pair ? await orderBalances(gateway, pair) : "Balances unavailable",
         "",
+        ...(pair && draft.quoteAmount && draft.sizingPrice ? [
+          `Entered: <b>${escapeHtml(draft.quoteAmount)} ${escapeHtml(pair.quoteAsset)}</b> before Fee`,
+          `Sizing price: <b>${escapeHtml(draft.sizingPrice)} ${escapeHtml(pair.quoteAsset)}</b> per ${escapeHtml(pair.baseAsset)}`,
+          `Calculated quantity: <b>${escapeHtml(draft.qty ?? "—")} ${escapeHtml(pair.baseAsset)}</b>`,
+          ""
+        ] : []),
         `⚠️ ${escapeHtml(String(state.data.inputError))}`,
         "",
         "No order was sent. Change the amount or cancel the order."
@@ -956,9 +962,15 @@ async function showPair(ctx: Context, gateway: ExchangeGateway, symbolId: number
     catalogRequest, displayData(gateway.listMarketOverview(), []),
     displayData(gateway.getOrderbook(symbolId, 5), null), displayData(gateway.getCandles(symbolId, timeframe, 32), []), balancesRequest
   ]);
-  // Attach a rejection handler immediately while Telegram renders the loading state.
-  void data.catch(() => undefined);
-  await editOrReply(ctx, `${heading("Opening market")}\n\nLoading prices and balances…`, new InlineKeyboard().text("‹ Markets", "markets:0").text("‹ Overview", "home"));
+  // Fast responses render once. Only show a loading panel for a perceptible delay.
+  let loadingTimer: NodeJS.Timeout | undefined;
+  let ready: boolean;
+  try {
+    ready = await Promise.race([data.then(() => true), new Promise<boolean>(resolve => {
+      loadingTimer = setTimeout(() => resolve(false), 350);
+    })]);
+  } finally { if (loadingTimer) clearTimeout(loadingTimer); }
+  if (!ready) await editOrReply(ctx, `${heading("Opening market")}\n\nLoading prices and balances…`, new InlineKeyboard().text("‹ Markets", "markets:0").text("‹ Overview", "home"));
   const [catalog, overview, book, candles, balances] = await data;
   const pair = requirePair(catalog.pairs, symbolId);
   const market = overview.find((item) => item.symbolId === symbolId);

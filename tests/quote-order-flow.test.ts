@@ -121,6 +121,9 @@ describe("quote amount flow: inline navigation and chronological replies", () =>
     expect(String(f.lastPanel().payload.text)).toContain("⚠️");
     await f.input("100");
     expect(String(f.lastPanel().payload.text)).toContain("Not enough available funds to sell 0.25 BNB");
+    expect(String(f.lastPanel().payload.text)).toContain("Entered: <b>100 USDT</b> before Fee");
+    expect(String(f.lastPanel().payload.text)).toContain("Sizing price: <b>400 USDT</b> per BNB");
+    expect(String(f.lastPanel().payload.text)).toContain("Calculated quantity: <b>0.25 BNB</b>");
     await f.callback("order:edit:size");
     await f.input("20");
     expect(String(f.lastPanel().payload.text)).toContain("Confirm order");
