@@ -7,8 +7,8 @@ export const assetLink = (asset: string, marketSymbol?: string) => marketSymbol
   ? `<a href="${pairUrl(marketSymbol)}"><b>${escapeHtml(asset)}</b> ↗</a>`
   : `<b>${escapeHtml(asset)}</b>`;
 export const heading = (label: string) => `💗 <b>PINK TERMINAL</b>\n<b>${escapeHtml(label)}</b>`;
-const TERMINAL_WORDMARK = "💗 𝙋𝙄𝙉𝙆 𝙏𝙀𝙍𝙈𝙄𝙉𝘼𝙇";
-export const terminalHeading = (label: string) => `${TERMINAL_WORDMARK}\n<b>${escapeHtml(label)}</b>`;
+const TERMINAL_WORDMARK = "💗 𝗣𝗜𝗡𝗞 𝗧𝗘𝗥𝗠𝗜𝗡𝗔𝗟";
+export const terminalHeading = (label = "") => TERMINAL_WORDMARK + (label ? `\n<b>${escapeHtml(label)}</b>` : "");
 export const section = (label: string) => `<b>${escapeHtml(label)}</b>`;
 /** Display only: preserve exact decimal strings in drafts and requests. */
 export function numberText(value: string | number | null | undefined, places = 6): string {

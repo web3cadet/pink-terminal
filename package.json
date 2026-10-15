@@ -49,6 +49,8 @@
     "bot:start": "node scripts/local-manager.mjs start",
     "bot:stop": "node scripts/local-manager.mjs stop",
     "bot:restart": "node scripts/local-manager.mjs restart",
+    "bot:update": "node scripts/local-manager.mjs update",
+    "bot:configure": "node scripts/local-manager.mjs configure",
     "bot:status": "node scripts/local-manager.mjs status",
     "bot:logs": "node scripts/local-manager.mjs logs",
     "bot:uninstall": "node scripts/local-manager.mjs uninstall",

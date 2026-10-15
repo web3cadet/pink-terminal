@@ -73,6 +73,21 @@ uninstall_bot() {
 
 if [[ "${1:-}" == uninstall ]]; then uninstall_bot; exit $?; fi
 
+update_bot() {
+  if [[ ! -d "$APP_DIR/.git" ]]; then
+    say "${YELLOW}This copy is not a Git checkout, so automatic update is unavailable.${RESET}"
+    return 1
+  fi
+  if git pull --ff-only && compose up -d --build; then
+    say "${GREEN}Update completed and the bot was rebuilt.${RESET}"
+  else
+    say "${RED}Update failed. Check Status and Recent logs before retrying.${RESET}"
+    return 1
+  fi
+}
+
+if [[ "${1:-}" == update ]]; then update_bot; exit $?; fi
+
 while true; do
   header
   show_status
@@ -118,12 +133,7 @@ while true; do
       bash "$APP_DIR/install.sh" --reconfigure
       ;;
     7)
-      if [[ ! -d "$APP_DIR/.git" ]]; then
-        say "${YELLOW}This copy is not a Git checkout, so automatic update is unavailable.${RESET}"
-      else
-        git pull --ff-only && compose up -d --build
-        say "${GREEN}Update completed and the bot was rebuilt.${RESET}"
-      fi
+      update_bot || true
       pause
       ;;
     8) uninstall_bot; pause ;;

@@ -11,6 +11,7 @@ import { randomBytes } from "node:crypto";
 import { planUninstall, removeInstallation } from "./uninstall-files.mjs";
 import { withManagementLock, runtimeEnvironment } from "./management-lock.mjs";
 import { formatLogs } from "./log-view.mjs";
+import { updateInstallation } from "./update-installation.mjs";
 
 const APP_DIR = process.cwd();
 const RUNTIME_DIR = path.join(APP_DIR, ".runtime");
@@ -215,6 +216,16 @@ async function reconfigure() {
   if (result.status !== 0) fail("Reconfiguration did not complete.");
 }
 
+async function updateBot() {
+  return updateInstallation(APP_DIR, {
+    stop: () => stopBot({ quiet: true }), print,
+    ask: async prompt => {
+      const rl = createInterface({ input: process.stdin, output: process.stdout });
+      try { return await rl.question(prompt); } finally { rl.close(); }
+    },
+  });
+}
+
 async function uninstall() {
   const plan = planUninstall(APP_DIR);
   print(`\nUninstall from: ${plan.root}`);
@@ -258,6 +269,7 @@ async function menu() {
     print(`  ${color.cyan}5)${color.reset} Recent logs`);
     print(`  ${color.pink}6)${color.reset} Reconfigure credentials`);
     print(`  ${color.red}7)${color.reset} Uninstall (keep .env)`);
+    print(`  ${color.pink}8)${color.reset} Update from GitHub`);
     print(`  ${color.dim}0)${color.reset} Exit\n`);
     const rl = createInterface({ input: process.stdin, output: process.stdout });
     const answer = (await rl.question(`${color.bold}Selection:${color.reset} `)).trim();
@@ -270,8 +282,9 @@ async function menu() {
       else if (answer === "5") showLogs();
       else if (answer === "6") await withManagementLock(APP_DIR, reconfigure);
       else if (answer === "7") { if (await withManagementLock(APP_DIR, uninstall)) return; }
+      else if (answer === "8") { if (await withManagementLock(APP_DIR, updateBot)) return; }
       else if (answer === "0") return;
-      else { print(`${color.yellow}Choose a number from 0 to 7.${color.reset}`); await sleep(900); continue; }
+      else { print(`${color.yellow}Choose a number from 0 to 8.${color.reset}`); await sleep(900); continue; }
     } catch (error) {
       print(`${color.red}${error instanceof Error ? error.message : String(error)}${color.reset}`);
     }
@@ -288,8 +301,10 @@ async function main() {
   if (command === "status") return showStatus();
   if (command === "logs") return showLogs();
   if (command === "uninstall") return withManagementLock(APP_DIR, uninstall);
+  if (command === "update") return withManagementLock(APP_DIR, updateBot);
+  if (command === "configure") return withManagementLock(APP_DIR, reconfigure);
   if (command === "menu") return menu();
-  fail("Unknown command. Use start, stop, restart, status, logs, or no argument for the menu.");
+  fail("Unknown command. Use start, stop, restart, status, logs, update, configure, uninstall, or no argument for the menu.");
 }
 
 main().catch((error) => {

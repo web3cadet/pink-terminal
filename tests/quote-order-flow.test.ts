@@ -23,7 +23,8 @@ function setup(side: OrderSide, kind: OrderKind, mode = "live") {
   const gateway = {
     getCatalog: async () => ({ pairs: [pair], assets: [{ asset: "BNB", ledgerId: 1 }, { asset: "USDT", ledgerId: 2 }] }),
     listMarketOverview: async () => [market],
-    listBalances: async () => [{ assetId: 1, available: "1400000000000000000" }, { assetId: 2, available: "169814199544793805000" }],
+    listOpenOrders: async () => [],
+    listBalances: async () => [{ assetId: 1, trading: "1400000000000000000", funding: "0", reserved: "0", available: "1400000000000000000" }, { assetId: 2, trading: "169814199544793805000", funding: "0", reserved: "0", available: "169814199544793805000" }],
     getSpotFeeRates: async () => ({ maker: "0.1", taker: "0.15" }), previewOrder, createOrder
   } as unknown as ExchangeGateway;
   const config = { telegramToken: "123:test", allowedChatIds: new Set([1]), allowedUserIds: new Set([1, 2]), tradingMode: mode, confirmationTtlSeconds: 90 } as AppConfig;
@@ -31,6 +32,7 @@ function setup(side: OrderSide, kind: OrderKind, mode = "live") {
   const bot = createTelegramBot({ config, gateway, database: db, trading: new TradingService(config, gateway, db, logger), logger });
   bot.botInfo = { id: 123, is_bot: true, first_name: "Test", username: "test_bot", can_join_groups: true, can_read_all_group_messages: false, supports_inline_queries: false, can_connect_to_business: false, has_main_web_app: false };
   const calls: { method: string; payload: Record<string, unknown> }[] = [];
+  let activeMessageId = 100;
   let editFailure: string | undefined;
   bot.api.config.use(async (_previous, method, payload) => {
     calls.push({ method, payload: payload as Record<string, unknown> });
@@ -38,22 +40,24 @@ function setup(side: OrderSide, kind: OrderKind, mode = "live") {
       const description = editFailure; editFailure = undefined;
       return { ok: false, error_code: 400, description } as never;
     }
-    return { ok: true, result: { message_id: method === "sendMessage" ? 101 : 100, date: 1, chat: { id: 1, type: "private" }, text: "panel" } } as never;
+    if (method === "sendMessage") activeMessageId++;
+    return { ok: true, result: { message_id: activeMessageId, date: 1, chat: { id: 1, type: "private" }, text: "panel" } } as never;
   });
   let updateId = 0;
-  const callback = (data: string, user = 1) => bot.handleUpdate({ update_id: ++updateId, callback_query: { id: String(updateId), chat_instance: "1", from: { id: user, is_bot: false, first_name: "Test" }, data, message: { message_id: 100, date: 1, chat: { id: 1, type: "private" }, text: "panel" } } });
+  const callback = (data: string, user = 1) => bot.handleUpdate({ update_id: ++updateId, callback_query: { id: String(updateId), chat_instance: "1", from: { id: user, is_bot: false, first_name: "Test" }, data, message: { message_id: activeMessageId, date: 1, chat: { id: 1, type: "private" }, text: "panel" } } });
   const input = (text: string) => bot.handleUpdate({ update_id: ++updateId, message: { message_id: 200 + updateId, date: 1, chat: { id: 1, type: "private" }, from: { id: 1, is_bot: false, first_name: "Test" }, text } });
-  const lastPanel = () => calls.filter(call => call.method === "editMessageText").at(-1)!;
+  const command = (text: string) => bot.handleUpdate({ update_id: ++updateId, message: { message_id: 200 + updateId, date: 1, chat: { id: 1, type: "private" }, from: { id: 1, is_bot: false, first_name: "Test" }, text, entities: [{ type: "bot_command", offset: 0, length: text.length }] } });
+  const lastPanel = () => calls.filter(call => ["editMessageText", "sendMessage"].includes(call.method)).at(-1)!;
   const confirmId = () => {
     const rows = (lastPanel().payload.reply_markup as { inline_keyboard: { callback_data?: string }[][] }).inline_keyboard;
     return rows.flat().find(button => button.callback_data?.startsWith("confirm:o:"))!.callback_data!;
   };
   db.saveWizard(1, 1, { flow: "order", step: "kind", data: { symbolId: 1, symbol: "BNB-USDT", side } });
   const button = (label: string) => (lastPanel().payload.reply_markup as { inline_keyboard: { text: string; callback_data: string }[][] }).inline_keyboard.flat().find(b => b.text === label)!.callback_data;
-  return { db, config, button, calls, gateway, market, previewOrder, createOrder, callback, input, lastPanel, confirmId, kind, failNextEdit: (description: string) => { editFailure = description; } };
+  return { db, config, button, calls, gateway, market, previewOrder, createOrder, callback, input, command, lastPanel, confirmId, kind, failNextEdit: (description: string) => { editFailure = description; } };
 }
 
-describe("one-card quote amount Telegram flow with real intent service and mock exchange", () => {
+describe("quote amount flow: inline navigation and chronological replies", () => {
   for (const side of ["BUY", "SELL"] as const) for (const kind of ["MARKET_IOC", "LIMIT_GTC", "LIMIT_GTD", "LIMIT_IOC", "LIMIT_FOK"] as const) {
     it(`${side} ${kind}: immediate mode waits for every required field and previews before sending`, async () => {
       const f = setup(side, kind);
@@ -76,7 +80,7 @@ describe("one-card quote amount Telegram flow with real intent service and mock 
     });
   }
   for (const side of ["BUY", "SELL"] as const) for (const kind of ["MARKET_IOC", "LIMIT_GTC", "LIMIT_GTD", "LIMIT_IOC", "LIMIT_FOK"] as const) {
-    it(`${side} ${kind}: explicit units, one panel, frozen quantity and confirmation required`, async () => {
+    it(`${side} ${kind}: explicit units, new replies, frozen quantity and confirmation required`, async () => {
       const f = setup(side, kind);
       await f.callback(`ordkind:${kind}`);
       expect(String(f.lastPanel().payload.text)).toContain(`Enter the amount in USDT to ${side.toLowerCase()} BNB for`);
@@ -102,12 +106,13 @@ describe("one-card quote amount Telegram flow with real intent service and mock 
       await f.callback(id);
       expect(f.createOrder).toHaveBeenCalledOnce();
       expect(f.createOrder.mock.calls[0]![0]).toMatchObject({ qty, quoteAmount: "100", side, kind });
-      expect(f.calls.filter(c => c.method === "sendMessage")).toHaveLength(0);
-      expect(f.calls.filter(c => c.method === "editMessageText").every(c => c.payload.message_id === 100)).toBe(true);
+      expect(f.calls.filter(c => c.method === "sendMessage")).toHaveLength(kind === "MARKET_IOC" ? 2 : kind === "LIMIT_GTD" ? 4 : 3);
+      expect(f.lastPanel().method).toBe("sendMessage");
+      expect(f.calls.some(c => c.method === "editMessageReplyMarkup" && c.payload.message_id === 100)).toBe(true);
       expect(f.calls.some(c => String(c.payload.text).includes("Amount saved"))).toBe(false);
     });
   }
-  it("retries invalid input and insufficient funds in the same card without submitting", async () => {
+  it("replies below invalid input and insufficient funds without submitting", async () => {
     const f = setup("SELL", "MARKET_IOC");
     f.previewOrder.mockResolvedValueOnce({ admissible: false, rejectionCode: "ERROR_CODE_INSUFFICIENT_FUNDS", raw: {} } as never);
     await f.callback("ordkind:MARKET_IOC");
@@ -121,7 +126,7 @@ describe("one-card quote amount Telegram flow with real intent service and mock 
     expect(String(f.lastPanel().payload.text)).toContain("Confirm order");
     expect(String(f.lastPanel().payload.text)).toContain("0.05 BNB");
     expect(f.previewOrder).toHaveBeenCalledTimes(2);
-    expect(f.calls.filter(c => c.method === "sendMessage")).toHaveLength(0);
+    expect(f.calls.filter(c => c.method === "sendMessage")).toHaveLength(3);
     expect(f.createOrder).not.toHaveBeenCalled();
   });
   it("keeps token input available for selling an exact quantity", async () => {
@@ -135,14 +140,15 @@ describe("one-card quote amount Telegram flow with real intent service and mock 
     expect(intent.payload.quoteAmount).toBeUndefined();
     expect(intent.payload.maxQuoteDebit).toBeUndefined();
   });
-  it("replaces a deleted panel once and then edits its replacement", async () => {
+  it("replaces a deleted navigation card and sends a fresh confirmation below input", async () => {
     const f = setup("BUY", "MARKET_IOC");
     f.failNextEdit("Bad Request: message to edit not found");
     await f.callback("ordkind:MARKET_IOC");
     expect(f.db.getWizard(1, 1)?.data.inputPromptId).toBe(101);
     await f.input("100");
-    expect(f.lastPanel().payload.message_id).toBe(101);
-    expect(f.calls.filter(c => c.method === "sendMessage")).toHaveLength(1);
+    expect(f.lastPanel().method).toBe("sendMessage");
+    expect(f.calls.filter(c => c.method === "sendMessage")).toHaveLength(2);
+    expect(f.calls.some(c => c.method === "editMessageReplyMarkup" && c.payload.message_id === 101)).toBe(true);
     expect(f.createOrder).not.toHaveBeenCalled();
   });
   it("does not create an extra card if Telegram says the message is unchanged", async () => {
@@ -220,5 +226,24 @@ describe("one-card quote amount Telegram flow with real intent service and mock 
     await f.callback(skip);
     expect(f.db.orderConfirmationEnabled(1, 1, confirmationAccountContext(f.config))).toBe(true);
     expect(f.createOrder).not.toHaveBeenCalled();
+  });
+  it("keeps result navigation inline but /menu and /start each send a fresh terminal", async () => {
+    const f = setup("SELL", "MARKET_IOC");
+    f.db.setOrderConfirmation(1, 1, confirmationAccountContext(f.config), false);
+    await f.callback("ordkind:MARKET_IOC");
+    const beforeInput = f.calls.length;
+    await f.input("100");
+    expect(f.calls.slice(beforeInput).filter(c => c.method === "sendMessage")).toHaveLength(1);
+    expect(f.lastPanel().method).toBe("sendMessage");
+    expect(String(f.lastPanel().payload.text)).toContain("Order admitted");
+    await f.callback("home");
+    expect(f.lastPanel().method).toBe("editMessageText");
+    expect(f.lastPanel().payload.message_id).toBe(101);
+    for (const command of ["/menu", "/start"]) {
+      await f.command(command);
+      expect(f.lastPanel().method).toBe("sendMessage");
+      expect(String(f.lastPanel().payload.text)).toContain("for Polyester testnet\n🟢 Status: online");
+    }
+    expect(f.createOrder).toHaveBeenCalledOnce();
   });
 });

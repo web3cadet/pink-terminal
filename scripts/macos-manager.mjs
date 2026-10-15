@@ -6,6 +6,7 @@ import { createInterface } from "node:readline/promises";
 import { MacProcess } from "./macos-process.mjs";
 import { planUninstall, removeInstallation } from "./uninstall-files.mjs";
 import { formatLogs } from "./log-view.mjs";
+import { updateInstallation } from "./update-installation.mjs";
 
 const root = process.cwd();
 const bot = new MacProcess(root);
@@ -24,13 +25,14 @@ async function status() {
 async function command(action) {
   if (action === "status") return status();
   if (action === "logs") return console.log(formatLogs(bot.logs(), { width: process.stdout.columns ?? 88 }));
-  if (!["start", "stop", "restart", "configure", "uninstall"].includes(action)) throw new Error("Unknown management command.");
+  if (!["start", "stop", "restart", "configure", "uninstall", "update"].includes(action)) throw new Error("Unknown management command.");
   if (action === "uninstall") {
     planUninstall(root);
     console.log(`Uninstall from: ${root}\nPermanently removes application files, local history and logs. Keeps .env and unrelated top-level files.\nExchange orders and strategies are not cancelled. Node.js, npm caches and your Telegram bot account remain.`);
     if (await question("Type DELETE to confirm (Enter cancels): ") !== "DELETE") { console.log("Uninstall cancelled."); return false; }
   }
   return bot.exclusive(async () => {
+    if (action === "update") return updateInstallation(root, { stop: () => bot.stop(), ask: question });
     if (action === "start") { await bot.start(); await status(); }
     if (action === "stop") { await bot.stop(); console.log("STOPPED · local data preserved"); }
     if (action === "restart") { await bot.stop(); await bot.start(); await status(); }
@@ -57,10 +59,10 @@ async function main() {
   while (true) {
     console.log("\n\x1b[38;2;255;47;111mPINK TERMINAL\x1b[0m · macOS (Beta)");
     await status();
-    console.log("\n1) Start\n2) Stop\n3) Restart\n4) Status\n5) Recent logs\n6) Reconfigure credentials\n7) Uninstall (keep .env)\n0) Exit");
+    console.log("\n1) Start\n2) Stop\n3) Restart\n4) Status\n5) Recent logs\n6) Reconfigure credentials\n7) Uninstall (keep .env)\n8) Update from GitHub\n0) Exit");
     const answer = await question("Selection: ");
     if (answer === "0") return;
-    const action = { "1": "start", "2": "stop", "3": "restart", "4": "status", "5": "logs", "6": "configure", "7": "uninstall" }[answer];
+    const action = { "1": "start", "2": "stop", "3": "restart", "4": "status", "5": "logs", "6": "configure", "7": "uninstall", "8": "update" }[answer];
     if (!action) continue;
     try { if (await run(action) === true) return; }
     catch (error) { console.error(error.message); }

@@ -35,7 +35,8 @@ export async function renderOverview(gateway: ExchangeGateway, config: AppConfig
   }
   const localVolume = database && userId !== undefined ? database.getBotTradingVolume(userId) : "0";
   return [
-    terminalHeading("Terminal"), "<i>for Polyester testnet</i>", modeText(config.tradingMode), "",
+    terminalHeading(), "", "for Polyester testnet", "🟢 Status: online",
+    ...(config.tradingMode === "live" ? [] : [modeText(config.tradingMode)]), "",
     "<b>◈ PORTFOLIO</b>",
     balances.status === "fulfilled" ? `Estimated value: <b>≈ ${numberText(estimated.toFixed(2), 2)} USDT</b>` : "Estimated value: <b>Unavailable</b>",
     `Volume: <b>${numberText(Number(localVolume).toFixed(2), 2)} USDT</b> <i>(filled via bot)</i>`,

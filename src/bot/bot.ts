@@ -15,7 +15,7 @@ import { resolveQuoteAmount } from "./order-sizing.js";
 import { assetLink, heading, modeText, numberText, pairLink, pairUrl, positiveInput, terminalHeading, WEBSITE } from "./presentation.js";
 
 const PAGE_SIZE = 8;
-const MARKET_REFRESH_MS = 1_000;
+const MARKET_REFRESH_MS = 5_000;
 const DECIMAL = /^(0|[1-9]\d*)(?:\.\d+)?$/;
 
 export function createTelegramBot(deps: {
@@ -42,9 +42,10 @@ export function createTelegramBot(deps: {
     if (method === "sendMessage" || method === "editMessageText") Object.assign(payload, { link_preview_options: { is_disabled: true } });
     return previous(method, payload, signal);
   });
-  const renderOrderPanel = async (ctx: Context, state: WizardState, text: string, keyboard: InlineKeyboard) => {
+  const renderOrderPanel = async (ctx: Context, state: WizardState, text: string, keyboard: InlineKeyboard, newMessage = false) => {
     const messageId = ctx.callbackQuery?.message?.message_id ?? Number(state.data.inputPromptId);
-    if (Number.isSafeInteger(messageId) && messageId > 0) {
+    // Buttons navigate within their card; text input gets a reply below the user's message.
+    if (!newMessage && ctx.callbackQuery && Number.isSafeInteger(messageId) && messageId > 0) {
       try {
         await bot.api.editMessageText(requireIds(ctx).chatId, messageId, text, { parse_mode: "HTML", reply_markup: keyboard });
         state.data.inputPromptId = messageId;
@@ -60,6 +61,10 @@ export function createTelegramBot(deps: {
     }
     const response = await ctx.reply(text, { parse_mode: "HTML", reply_markup: keyboard });
     state.data.inputPromptId = response.message_id;
+    if (Number.isSafeInteger(messageId) && messageId > 0 && messageId !== response.message_id) {
+      await bot.api.editMessageReplyMarkup(requireIds(ctx).chatId, messageId, { reply_markup: { inline_keyboard: [] } })
+        .catch(() => undefined); // Old/deleted cards must not prevent delivery of the new reply.
+    }
   };
   const requestInput = async (ctx: Context, state: WizardState) => {
     const pair = requirePair((await gateway.getCatalog()).pairs, Number(state.data.symbolId));
@@ -105,7 +110,7 @@ export function createTelegramBot(deps: {
       logger.warn("order_submission_needs_review", { error: error instanceof Error ? error.message : "unknown" });
       result = `${terminalHeading("Check order status")}\n\n${escapeHtml(error instanceof Error ? error.message : "Submission could not be confirmed.")}\n\nCheck Orders before trying again. This order will not be retried automatically.`;
     }
-    await renderOrderPanel(ctx, state, result, new InlineKeyboard().text("📋 Open orders", "orders:open").row().text("‹ Overview", "home"));
+    await renderOrderPanel(ctx, state, result, new InlineKeyboard().text("📋 Open orders", "orders:open").row().text("‹ Overview", "home"), true);
   };
   const prepareAndShowOrderConfirmation = async (ctx: Context, state: WizardState): Promise<void> => {
     const ids = requireIds(ctx);
@@ -223,7 +228,8 @@ export function createTelegramBot(deps: {
     try {
       const snapshot = await renderTerminalSnapshot(gateway, config, true, session.page);
       if (liveSessions.get(chatId) !== session) return;
-      if (snapshot.text !== session.lastText) {
+      const content = (text: string) => text.replace(/\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} UTC/g, "");
+      if (content(snapshot.text) !== content(session.lastText)) {
         session.pending = bot.api.editMessageText(chatId, session.messageId, snapshot.text, { parse_mode: "HTML", reply_markup: snapshot.keyboard }).then(() => undefined);
         await session.pending;
         session.lastText = snapshot.text;
@@ -256,6 +262,7 @@ export function createTelegramBot(deps: {
   };
 
   const chatUpdates = new Map<number, Promise<void>>();
+  const pendingNavigation = new Set<string>();
   bot.use(async (ctx, next) => {
     const chatId = ctx.chat?.id;
     const userId = ctx.from?.id;
@@ -267,6 +274,16 @@ export function createTelegramBot(deps: {
       if (ctx.message?.text === "/start") await ctx.reply("Access denied.");
       return;
     }
+    const callbackData = ctx.callbackQuery?.data;
+    const navigation = callbackData && /^(?:pair:\d+|pairtf:\d+:(?:1m|5m|1h|4h)|book:\d+:(?:5|10|20)|markets:\d+)$/.test(callbackData);
+    const navigationKey = navigation ? `${chatId}:${userId}:${ctx.callbackQuery?.message?.message_id}:${callbackData}` : undefined;
+    if (navigationKey) {
+      const duplicate = pendingNavigation.has(navigationKey);
+      pendingNavigation.add(navigationKey);
+      // Acknowledge before waiting for an in-flight edit or this chat's queue.
+      await ctx.answerCallbackQuery({ text: "Loading…" }).catch(() => undefined);
+      if (duplicate) return;
+    }
     // Serialize updates from this chat so repeated amount messages cannot create two immediate orders.
     const previous = chatUpdates.get(chatId);
     let release!: () => void;
@@ -274,12 +291,12 @@ export function createTelegramBot(deps: {
     chatUpdates.set(chatId, current);
     await previous;
     try {
-      const callbackData = ctx.callbackQuery?.data;
       if (ctx.message?.text?.startsWith("/") || callbackData === "home" || callbackData === "markets:0") clearFlow(ctx, database);
       if ((callbackData && !callbackData.startsWith("live:")) || ctx.message) await stopLiveForChat(chatId);
       await next();
     } finally {
       release();
+      if (navigationKey) pendingNavigation.delete(navigationKey);
       if (chatUpdates.get(chatId) === current) chatUpdates.delete(chatId);
     }
   });
@@ -352,7 +369,6 @@ export function createTelegramBot(deps: {
   });
 
   bot.callbackQuery(/^markets:(\d+)$/, async (ctx) => {
-    await ctx.answerCallbackQuery({ text: "Live prices loading…" });
     const messageId = ctx.callbackQuery.message?.message_id;
     if (!messageId) throw new Error("Trading requires a regular chat message");
     await startLiveForChat(requireIds(ctx).chatId, messageId, Number(ctx.match[1]));
@@ -378,17 +394,14 @@ export function createTelegramBot(deps: {
   });
 
   bot.callbackQuery(/^pair:(\d+)$/, async (ctx) => {
-    await ctx.answerCallbackQuery({ text: "Loading market…" });
     await showPair(ctx, gateway, Number(ctx.match[1]), "5m");
   });
 
   bot.callbackQuery(/^pairtf:(\d+):(1m|5m|1h|4h)$/, async (ctx) => {
-    await ctx.answerCallbackQuery({ text: `Loading ${ctx.match[2]} chart…` });
     await showPair(ctx, gateway, Number(ctx.match[1]), ctx.match[2]!);
   });
 
   bot.callbackQuery(/^book:(\d+):(5|10|20)$/, async (ctx) => {
-    await ctx.answerCallbackQuery({ text: "Loading order book…" });
     await showOrderbook(ctx, gateway, Number(ctx.match[1]), Number(ctx.match[2]));
   });
 
@@ -911,15 +924,33 @@ export async function renderTerminalSnapshot(gateway: ExchangeGateway, config: A
   return { text, keyboard };
 }
 
+// Display-only deadline. Trading validation and submission never use these fallbacks.
+async function displayData<T>(request: Promise<T>, fallback: T): Promise<T> {
+  let timer: NodeJS.Timeout | undefined;
+  try {
+    return await Promise.race([request.catch(() => fallback), new Promise<T>(resolve => { timer = setTimeout(() => resolve(fallback), 3_000); })]);
+  } finally { if (timer) clearTimeout(timer); }
+}
+
 async function showPair(ctx: Context, gateway: ExchangeGateway, symbolId: number, timeframe: string): Promise<void> {
-  const [catalog, overview, book, candles] = await Promise.all([
-    gateway.getCatalog(), gateway.listMarketOverview(), gateway.getOrderbook(symbolId, 5), gateway.getCandles(symbolId, timeframe, 32)
+  const catalogRequest = gateway.getCatalog();
+  const balancesRequest = catalogRequest.then(catalog => {
+    const pair = requirePair(catalog.pairs, symbolId);
+    return displayData(orderBalances(gateway, pair), `\n<b>Available to trade</b>\n${escapeHtml(pair.baseAsset)}: unavailable\n${escapeHtml(pair.quoteAsset)}: unavailable\n`);
+  });
+  const data = Promise.all([
+    catalogRequest, displayData(gateway.listMarketOverview(), []),
+    displayData(gateway.getOrderbook(symbolId, 5), null), displayData(gateway.getCandles(symbolId, timeframe, 32), []), balancesRequest
   ]);
+  // Attach a rejection handler immediately while Telegram renders the loading state.
+  void data.catch(() => undefined);
+  await editOrReply(ctx, `${heading("Opening market")}\n\nLoading prices and balances…`, new InlineKeyboard().text("‹ Markets", "markets:0").text("‹ Overview", "home"));
+  const [catalog, overview, book, candles, balances] = await data;
   const pair = requirePair(catalog.pairs, symbolId);
   const market = overview.find((item) => item.symbolId === symbolId);
     const closes = [...candles].sort((a, b) => Number(a.tsSec) - Number(b.tsSec)).map((item) => Number(item.close)).filter(Number.isFinite);
-  const bid = book.bids[0]?.price ?? market?.bestBid ?? "—";
-  const ask = book.asks[0]?.price ?? market?.bestAsk ?? "—";
+  const bid = book?.bids[0]?.price ?? market?.bestBid ?? "—";
+  const ask = book?.asks[0]?.price ?? market?.bestAsk ?? "—";
   const change = market?.change24hBps === null || market?.change24hBps === undefined ? "—" : `${(market.change24hBps / 100).toFixed(2)}%`;
   const keyboard = new InlineKeyboard()
     .text("1m", `pairtf:${symbolId}:1m`).text("5m", `pairtf:${symbolId}:5m`).text("1h", `pairtf:${symbolId}:1h`).text("4h", `pairtf:${symbolId}:4h`).row()
@@ -930,8 +961,8 @@ async function showPair(ctx: Context, gateway: ExchangeGateway, symbolId: number
     heading("Market overview"), pairLink(pair.symbol), "",
     `<b>${pair.quoteAsset === "USDT" ? "$" : ""}${numberText(market?.lastPrice)} ${escapeHtml(pair.quoteAsset)}</b>`,
     `24h: <code>${escapeHtml(change)}</code>`,
-    await orderBalances(gateway, pair),
-    "", `<b>◈ CHART · ${escapeHtml(timeframe)}</b>`, `<code>${sparkline(closes)}</code>`, "",
+    balances,
+    "", `<b>◈ CHART · ${escapeHtml(timeframe)}</b>`, closes.length ? `<code>${sparkline(closes)}</code>` : "Chart unavailable · use Refresh to try again", "",
     "<b>▥ MARKET DATA</b>",
     `🟢 Bid  ${numberText(bid)}\n🔴 Ask  ${numberText(ask)}`,
     `24h high  ${numberText(market?.high24h)}\n24h low  ${numberText(market?.low24h)}`,
@@ -1135,8 +1166,14 @@ async function showOrderOptions(ctx: Context, state: WizardState): Promise<void>
 }
 
 async function editOrReply(ctx: Context, text: string, keyboard: InlineKeyboard): Promise<void> {
-  try { await ctx.editMessageText(text, { parse_mode: "HTML", reply_markup: keyboard }); }
-  catch { await ctx.reply(text, { parse_mode: "HTML", reply_markup: keyboard }); }
+  if (ctx.callbackQuery?.message) {
+    try { await ctx.editMessageText(text, { parse_mode: "HTML", reply_markup: keyboard }); return; }
+    catch (error) {
+      if (error instanceof GrammyError && error.description.includes("message is not modified")) return;
+      if (!(error instanceof GrammyError) || !/message to edit not found|message can't be edited/i.test(error.description)) throw error;
+    }
+  }
+  await ctx.reply(text, { parse_mode: "HTML", reply_markup: keyboard });
 }
 
 function requireIds(ctx: Context): { chatId: number; userId: number } {

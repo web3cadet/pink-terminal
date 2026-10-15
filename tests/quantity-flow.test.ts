@@ -43,9 +43,9 @@ describe("quantity input end to end through Telegram handlers", () => {
       expect(database.getWizard(1, 1)?.data.qty).toBe("1.25");
       expect(database.getWizard(1, 1)?.data.maxQuoteDebit).toBeUndefined();
       expect(database.getWizard(1, 1)?.step).toBe("options");
-      expect(calls.some(c => c.method === "editMessageText" && String(c.payload.text).includes("1.25"))).toBe(true);
+      expect(calls.some(c => c.method === "sendMessage" && String(c.payload.text).includes("1.25"))).toBe(true);
       expect(gateway.createOrder).not.toHaveBeenCalled();
-      expect(calls.filter(c => c.method === "sendMessage")).toHaveLength(0);
+      expect(calls.filter(c => c.method === "sendMessage")).toHaveLength(1);
     } finally { vi.clearAllTimers(); vi.useRealTimers(); database.close(); }
   });
   it("rejects invalid amounts rather than interpreting them as zero or exponent notation", () => {
@@ -100,7 +100,7 @@ describe("quantity input end to end through Telegram handlers", () => {
       });
       expect(prepareOrder).toHaveBeenCalledOnce();
       expect(database.getWizard(1, 1)).toBeNull();
-      const confirmation = calls.find(c => c.method === "editMessageText" && String(c.payload.text).includes("Checked by Polyester"));
+      const confirmation = calls.find(c => c.method === "sendMessage" && String(c.payload.text).includes("Checked by Polyester"));
       expect(confirmation).toBeDefined();
       expect(String(confirmation?.payload.text)).toContain("Nothing has been sent yet");
       expect(String(confirmation?.payload.text)).toContain("Fee: Maker <b>0.1%</b> · Taker <b>0.15%</b>");
@@ -109,8 +109,8 @@ describe("quantity input end to end through Telegram handlers", () => {
       expect(String(confirmation?.payload.text)).not.toContain("CHART");
       const rows = (confirmation?.payload.reply_markup as { inline_keyboard: Array<Array<{ text: string; callback_data?: string }>> }).inline_keyboard;
       expect(rows.flat().some(button => button.text === "✅ Confirm BUY · ~50 USDT" && button.callback_data?.startsWith("confirm:o:"))).toBe(true);
-      expect(confirmation?.payload.message_id).toBe(350);
-      expect(calls.filter(c => c.method === "sendMessage")).toHaveLength(0);
+      expect(calls.some(c => c.method === "editMessageReplyMarkup" && c.payload.message_id === 350)).toBe(true);
+      expect(calls.filter(c => c.method === "sendMessage")).toHaveLength(1);
       expect(String(confirmation?.payload.text)).toContain("0.6 HYPE");
       expect(createOrder).not.toHaveBeenCalled();
     } finally { vi.clearAllTimers(); vi.useRealTimers(); database.close(); }

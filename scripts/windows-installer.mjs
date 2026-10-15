@@ -6,6 +6,7 @@ import { localPlatform } from "./local-platform.mjs";
 import { retryAccessCheck, replaceApiValues } from "./access-retry.mjs";
 import { withManagementLock } from "./management-lock.mjs";
 import { protectSecretFile, writeSecretFile } from "./secret-file.mjs";
+import { assertUpdateTarget } from "./update-installation.mjs";
 import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { cp, mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
@@ -20,6 +21,7 @@ const LOCAL_RUN = args.has("--local") || path.resolve(SOURCE_DIR) === path.resol
 const FORCE_RECONFIGURE = args.has("--reconfigure");
 const SELF_TEST = args.has("--self-test");
 const VERIFY_INSTALL = args.has("--verify-install");
+const UPDATE_ONLY = args.has("--update");
 const PUBLIC_INSTALL_COMMAND = "npx --yes github:web3cadet/pink-terminal";
 
 const color = {
@@ -309,6 +311,10 @@ async function runSelfTest() {
 }
 
 async function main() {
+  if (UPDATE_ONLY) {
+    if (FORCE_RECONFIGURE || VERIFY_INSTALL || SELF_TEST || ["--stop", "--status", "--uninstall"].some(flag => args.has(flag))) fail("Update cannot be combined with other installer actions.");
+    assertUpdateTarget(TARGET_DIR);
+  }
   const recoveryActions = ["stop", "status", "uninstall"].filter(action => args.has("--" + action));
   if (recoveryActions.length > 1) fail("Choose one recovery action: --stop, --status or --uninstall.");
   if (recoveryActions.length === 1) {
@@ -320,9 +326,10 @@ async function main() {
   if (!nodeVersionIsSupported()) fail(`Node.js 22.12 or newer is required. Detected ${process.versions.node}.`);
 
   banner();
-  if (!VERIFY_INSTALL) await showDisclaimer();
+  if (!VERIFY_INSTALL && !UPDATE_ONLY) await showDisclaimer();
   progress(5, "Installer accepted");
   assertTargetIsSafe();
+  if (UPDATE_ONLY) run(process.execPath, [path.join(TARGET_DIR, "scripts", "local-manager.mjs"), "stop"], "Stop before update", { inherit: true });
   await copyApplication();
   progress(18, "Application files ready");
 
@@ -340,7 +347,7 @@ async function main() {
 
   const envFile = path.join(TARGET_DIR, ".env");
   let keepExisting = existsSync(envFile) && !FORCE_RECONFIGURE;
-  if (keepExisting) {
+  if (keepExisting && !UPDATE_ONLY) {
     print(`\n${color.yellow}Existing private configuration found.${color.reset}`);
     print(`  ${color.green}1)${color.reset} Keep it and update/relaunch`);
     print(`  ${color.yellow}2)${color.reset} Replace it using the wizard`);
@@ -384,7 +391,7 @@ async function main() {
   print(`${color.bold}Quick restart:${color.reset}   npm run bot:restart`);
   print(`${color.bold}Status:${color.reset}          npm run bot:status`);
   print(`${color.bold}Logs:${color.reset}            npm run bot:logs`);
-  print(`\n${color.dim}To update later, run the same one-line installer in this folder. Your .env and data are preserved.${color.reset}`);
+  print(`\n${color.dim}To update later, choose Update in npm run manage or run npm run bot:update. Your .env and data are preserved.${color.reset}`);
 }
 
 withManagementLock(TARGET_DIR, main).catch((error) => {

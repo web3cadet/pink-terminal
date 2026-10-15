@@ -67,11 +67,16 @@ npm run manage
 npm run bot:start
 npm run bot:stop
 npm run bot:restart
+npm run bot:update
 npm run bot:status
 npm run bot:logs
+npm run bot:configure
+npm run bot:uninstall
 ```
 
-Re-run the original one-line installer to refresh source code and dependencies. Use `npm run bot:restart` for an ordinary restart or after editing `.env`. Local operation requires an awake, online computer. Start the bot again after logout or reboot. The manager does not register a login service.
+Choose **Update from GitHub** in the menu or run `npm run bot:update`. After confirmation, the bot stops, the current GitHub `main` version and dependencies are installed and checked, then the bot restarts. `.env` and local data are preserved without re-entering credentials. Application files are replaced: back up custom code first. Source Git checkouts are not overwritten; update those with Git. If an update fails, check Status and Logs before restarting; retry Update or the original one-line installer in the same folder. Successful updates close the old manager; reopen `npm run manage` to load the new version.
+
+Use `npm run bot:configure` to change credentials, or `npm run bot:restart` for an ordinary restart or after editing `.env`. Local operation requires an awake, online computer. Start the bot again after logout or reboot. The manager does not register a login service.
 
 macOS support is beta. Windows keeps its existing background runner; macOS uses a separate runner with an authenticated localhost control channel. Both expose the same npm management commands. The `.github/workflows/platform-checks.yml` workflow checks Windows, Ubuntu, macOS Apple Silicon and macOS Intel; a prepared workflow is not evidence of a completed run. A manual macOS setup with real Telegram/Polyester credentials is still required before removing the beta label.
 
@@ -100,6 +105,8 @@ Use `npm run bot:uninstall` for confirmed removal of a local installed copy, kee
 - one-time confirmations, expiry, exchange-aware precision/minimum validation, allowlisted Telegram chat/user IDs
 
 Regular orders ask for final confirmation by default. The final card has **Confirm**, **Cancel**, and **Don't show again**. The last button disables the review screen for future orders; it does not submit the current order. You can also change this in **Security → Order confirmation**. When disabled, completing the amount and any required price/expiry submits the order immediately after validation. Market value can change and Fee still applies. Strategies retain their confirmation step. The preference survives restart and is stored per Telegram user, chat and API configuration; a different key/subaccount/mode defaults to confirmation ON.
+
+Buttons navigate within the card you clicked. Entering an amount, price or expiry receives a new reply below your input; the order result also arrives as a new message. Superseded order cards have their buttons removed. `/menu` and `/start` open a fresh terminal message. The market list refreshes every five seconds when prices change. Opening a pair shows a loading state immediately; slow display-only market data can appear as unavailable after three seconds, without weakening order validation.
 
 The local manager's **Recent logs** view on Windows and macOS formats events with timestamps, readable messages and severity colors (green/info, yellow/warning, red/error). It keeps errors and stack traces visible. The original structured log in `.runtime/bot.log` remains unchanged for diagnostics. SQLite's experimental-runtime advisory is condensed into a short note; it is not a bot failure. Redirected output and `NO_COLOR` use plain text.
 - stable client IDs persisted before submission and reconciliation of ambiguous order outcomes
