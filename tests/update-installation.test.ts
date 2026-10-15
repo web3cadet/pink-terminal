@@ -3,7 +3,7 @@ import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "nod
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
-const { updateInstallation, assertUpdateTarget } = await import(pathToFileURL(path.resolve("scripts/update-installation.mjs")).href);
+const { updateInstallation, assertUpdateTarget, formatUpdateSummary } = await import(pathToFileURL(path.resolve("scripts/update-installation.mjs")).href);
 const roots: string[] = [];
 function fixture() {
   const root = mkdtempSync(path.resolve(".pink-update-test-")); roots.push(root);
@@ -16,6 +16,18 @@ function fixture() {
 afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
 
 describe("local update workflow", () => {
+  it.each([40, 52, 100])("keeps the update card readable in a %i-column terminal", width => {
+    const plain = formatUpdateSummary({ width, color: false });
+    expect(plain).not.toContain("\u001b[");
+    expect(Math.max(...plain.split("\n").map((line: string) => line.length))).toBeLessThanOrEqual(width);
+    expect(plain).toContain("YOUR DATA STAYS");
+    expect(plain).toContain("Enter  Cancel");
+    const words = plain.replace(/\s+/g, " ");
+    expect(words).toContain("Keep .env, local history and saved settings.");
+    expect(words).toContain("Exchange orders and strategies are not cancelled.");
+    expect(words).toContain("Custom code edits will be replaced.");
+    expect(formatUpdateSummary({ width, color: true }).replace(/\u001b\[[0-9;]*m/g, "")).toBe(plain);
+  });
   it("stops before invoking the current GitHub main installer with separate arguments", async () => {
     const root = fixture(), events: string[] = [];
     const run = vi.fn(() => events.push("install"));

@@ -391,7 +391,8 @@ async function main() {
   print(`${color.bold}Quick restart:${color.reset}   npm run bot:restart`);
   print(`${color.bold}Status:${color.reset}          npm run bot:status`);
   print(`${color.bold}Logs:${color.reset}            npm run bot:logs`);
-  print(`\n${color.dim}To update later, choose Update in npm run manage or run npm run bot:update. Your .env and data are preserved.${color.reset}`);
+  print(`${color.bold}Update:${color.reset}          npm run bot:update`);
+  print(`${color.dim}Updates preserve .env and local data.${color.reset}`);
 }
 
 withManagementLock(TARGET_DIR, main).catch((error) => {
