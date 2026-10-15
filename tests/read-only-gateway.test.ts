@@ -1,8 +1,25 @@
 import { describe, expect, it, vi } from "vitest";
 import type { ExchangeGateway } from "../src/domain.js";
 import { ReadOnlyGateway } from "../src/polyester/read-only-gateway.js";
+import { resolveQuoteAmount } from "../src/bot/order-sizing.js";
+import type { OrderDraft, PairConfig } from "../src/domain.js";
 
 describe("read-only gateway", () => {
+  it("delegates account fee reads for percentage limit previews without permitting writes", async () => {
+    const getSpotFeeRates = vi.fn(async () => ({ maker: "0.1", taker: "0.15" }));
+    const gateway = new ReadOnlyGateway({ getSpotFeeRates } as unknown as ExchangeGateway);
+    const draft: OrderDraft = { symbolId: 1, symbol: "BTC-USDT", side: "BUY", kind: "LIMIT_GTC", price: "100", quoteAmount: "100", balancePercent: "100" };
+    await resolveQuoteAmount(gateway, { symbolId: 1, stepSize: "0.001", quoteQuantityScale: 6 } as PairConfig, draft);
+    expect(draft.qty).toBe("0.998");
+    expect(getSpotFeeRates).toHaveBeenCalledWith(1);
+    await expect(gateway.createOrder(draft, "preview-only")).rejects.toThrow("Read-only mode blocks");
+  });
+
+  it("does not invent zero fees when the source cannot provide them", async () => {
+    const gateway = new ReadOnlyGateway({} as ExchangeGateway);
+    await expect(gateway.getSpotFeeRates(1)).rejects.toThrow("Fee rates are unavailable");
+  });
+
   it("delegates reads", async () => {
     const listBalances = vi.fn(async () => []);
     const source = { listBalances } as unknown as ExchangeGateway;

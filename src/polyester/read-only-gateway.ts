@@ -23,6 +23,9 @@ export class ReadOnlyGateway implements ExchangeGateway {
   getCandles(symbolId: number, timeframe: string, limit?: number): Promise<Candle[]> { return this.gateway.getCandles(symbolId, timeframe, limit); }
   listBalances(): Promise<Balance[]> { return this.gateway.listBalances(); }
   getAccountStats(): Promise<{ volume30dUsd?: string; asOf?: string }> { return this.gateway.getAccountStats?.() ?? Promise.resolve({}); }
+  getSpotFeeRates(symbolId: number): Promise<{ maker: string; taker: string }> {
+    return this.gateway.getSpotFeeRates?.(symbolId) ?? Promise.reject(new Error("Fee rates are unavailable"));
+  }
   previewOrder(draft: OrderDraft, clientOrderId: string): Promise<OrderPreview> { return this.gateway.previewOrder(draft, clientOrderId); }
   listOpenOrders(symbolId?: number): Promise<OrderSummary[]> { return this.gateway.listOpenOrders(symbolId); }
   listOrderHistory(symbolId?: number): Promise<OrderSummary[]> { return this.gateway.listOrderHistory(symbolId); }
