@@ -15,6 +15,7 @@ export interface IntentRecord {
   userId: number;
   operation: "order" | "trigger";
   clientId: string;
+  accountContext?: string | null;
   payload: Record<string, unknown>;
   preview: Record<string, unknown> | null;
   status: string;
@@ -61,17 +62,22 @@ export class AppDatabase {
     const now = Date.now();
     this.db.prepare(`
       INSERT INTO operation_intents
-        (id, chat_id, user_id, operation, client_id, payload_json, preview_json, status, expires_at, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        (id, chat_id, user_id, operation, client_id, payload_json, preview_json, status, expires_at, created_at, updated_at, account_context)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       input.id, input.chatId, input.userId, input.operation, input.clientId, JSON.stringify(input.payload),
-      input.preview ? JSON.stringify(input.preview) : null, input.status, input.expiresAt, now, now
+      input.preview ? JSON.stringify(input.preview) : null, input.status, input.expiresAt, now, now, input.accountContext ?? null
     );
   }
 
   getIntent(id: string): IntentRecord | null {
     const row = this.db.prepare("SELECT * FROM operation_intents WHERE id = ?").get(id) as DbIntentRow | undefined;
     return row ? mapIntent(row) : null;
+  }
+
+  invalidateOtherAccountConfirmations(context: string): void {
+    this.db.prepare("UPDATE operation_intents SET status = 'superseded', updated_at = ? WHERE status = 'previewed' AND (account_context IS NULL OR account_context != ?)")
+      .run(Date.now(), context);
   }
 
   invalidateConfirmations(chatId: number, userId: number, operation?: "order" | "trigger"): void {
@@ -246,6 +252,10 @@ export class AppDatabase {
         updated_at INTEGER NOT NULL
       );
     `);
+    const columns = this.db.prepare("PRAGMA table_info(operation_intents)").all() as Array<{ name: string }>;
+    if (!columns.some(column => column.name === "account_context")) {
+      this.db.exec("ALTER TABLE operation_intents ADD COLUMN account_context TEXT");
+    }
   }
 }
 
@@ -253,11 +263,13 @@ interface DbIntentRow {
   id: string; chat_id: number; user_id: number; operation: "order" | "trigger"; client_id: string;
   payload_json: string; preview_json: string | null; status: string; expires_at: number;
   result_json: string | null; error: string | null; created_at: number; updated_at: number;
+  account_context: string | null;
 }
 
 function mapIntent(row: DbIntentRow): IntentRecord {
   return {
     id: row.id, chatId: row.chat_id, userId: row.user_id, operation: row.operation, clientId: row.client_id,
+    accountContext: row.account_context,
     payload: JSON.parse(row.payload_json) as Record<string, unknown>,
     preview: row.preview_json ? JSON.parse(row.preview_json) as Record<string, unknown> : null,
     status: row.status, expiresAt: row.expires_at,

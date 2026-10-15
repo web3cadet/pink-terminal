@@ -6,6 +6,7 @@ This bot signs trading requests and must be treated as a security-sensitive appl
 
 - Never send a Telegram bot token, Polyester key ID, or Ed25519 secret through Telegram, Discord, an issue, a commit, or a screenshot.
 - Put secrets only in the server-side `.env` file. The repository ignores that file.
+- The Windows installer restricts `.env` to the installing Windows account, SYSTEM and administrators. That account can still open, edit and delete it normally, without an extra password. This does not protect against malware running as that user or an administrator. On macOS and Ubuntu, use owner-only file permissions.
 - Create a dedicated Polyester testnet API key. Grant only `read-balances`, `read-spot`, and `trade-spot`.
 - Do not grant withdrawal, internal-transfer, address-book, or account-administration permissions.
 - Prefer a subaccount, a market allowlist, an expiry, and a `/32` IP allowlist for the VPS.
@@ -16,6 +17,8 @@ This bot signs trading requests and must be treated as a security-sensitive appl
 
 - `TRADING_MODE=paper` prevents exchange mutations.
 - Every order or trigger requires a short-lived, one-time Telegram confirmation.
+- Pending confirmations are bound to the API endpoint, credentials, subaccount and trading mode. Changing these invalidates pending confirmations, including legacy unbound confirmations; submitted exchange orders and strategies are not cancelled.
+- Windows installation and management operations are exclusive per installation folder. This does not coordinate separate copies using the same Telegram token.
 - The bot does not impose artificial order-size or execution caps; Polyester balances, market rules, API policy, and server preview are authoritative.
 - Client order IDs are persisted before submission. Unknown outcomes are reconciled; they are never blindly resubmitted.
 - Cancel-all and strategy writes require writable mode and retain explicit confirmation flows.

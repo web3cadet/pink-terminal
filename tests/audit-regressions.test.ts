@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
 import { AppDatabase } from "../src/storage/database.js";
-import { TradingService } from "../src/services/trading.js";
+import { TradingService, confirmationAccountContext } from "../src/services/trading.js";
 import { Logger } from "../src/log.js";
 import type { AppConfig } from "../src/config.js";
 import type { ExchangeGateway } from "../src/domain.js";
@@ -8,7 +8,7 @@ import type { ExchangeGateway } from "../src/domain.js";
 const logger = new Logger("error");
 const config = { tradingMode: "live" } as AppConfig;
 function intent(db: AppDatabase, operation: "order" | "trigger" = "order") {
-  db.createIntent({ id: "one", chatId: 1, userId: 1, operation, clientId: "client", payload: {}, preview: {}, status: "previewed", expiresAt: Date.now() + 90_000 });
+  db.createIntent({ id: "one", chatId: 1, userId: 1, operation, clientId: "client", payload: {}, preview: {}, status: "previewed", expiresAt: Date.now() + 90_000, accountContext: confirmationAccountContext(config) });
 }
 describe("audit regressions", () => {
   it("cancelled or edited confirmations cannot submit, even when clicked again", async () => {

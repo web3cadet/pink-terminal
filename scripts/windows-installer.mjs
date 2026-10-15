@@ -4,8 +4,10 @@ import assert from "node:assert/strict";
 import { runInstallerCommand } from "./installer-process.mjs";
 import { localPlatform } from "./local-platform.mjs";
 import { retryAccessCheck, replaceApiValues } from "./access-retry.mjs";
+import { withManagementLock } from "./management-lock.mjs";
+import { protectSecretFile, writeSecretFile } from "./secret-file.mjs";
 import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
-import { chmod, cp, mkdir, rename, rm, writeFile } from "node:fs/promises";
+import { cp, mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import process from "node:process";
 import { createInterface } from "node:readline/promises";
@@ -246,19 +248,12 @@ async function replaceApiKey() {
   const { apiKeyId, apiSecret } = await collectApiKey();
   const envFile = path.join(TARGET_DIR, ".env");
   const content = replaceApiValues(readFileSync(envFile, "utf8"), apiKeyId, apiSecret);
-  const temporary = path.join(TARGET_DIR, `.env.tmp.${process.pid}`);
-  await writeFile(temporary, content, { encoding: "utf8", mode: 0o600 });
-  if (process.platform === "win32") await rm(envFile, { force: true });
-  await rename(temporary, envFile);
+  await writeSecretFile(envFile, content);
   print(`${color.green}API key saved. Telegram settings and other configuration kept.${color.reset}`);
 }
 
 async function writeProtectedConfiguration(config) {
-  const temporary = path.join(TARGET_DIR, `.env.tmp.${process.pid}`);
-  await writeFile(temporary, renderEnvironment(config), { encoding: "utf8", mode: 0o600 });
-  if (process.platform === "win32") await rm(path.join(TARGET_DIR, ".env"), { force: true });
-  await rename(temporary, path.join(TARGET_DIR, ".env"));
-  try { await chmod(path.join(TARGET_DIR, ".env"), 0o600); } catch { /* Windows uses ACLs rather than POSIX mode bits. */ }
+  await writeSecretFile(path.join(TARGET_DIR, ".env"), renderEnvironment(config));
   await mkdir(path.join(TARGET_DIR, "data"), { recursive: true });
   await mkdir(path.join(TARGET_DIR, ".runtime"), { recursive: true });
   await writeFile(path.join(TARGET_DIR, ".runtime", "telegram-bot.json"), `${JSON.stringify(config.identity, null, 2)}\n`, { mode: 0o600 });
@@ -266,6 +261,7 @@ async function writeProtectedConfiguration(config) {
 }
 
 async function refreshExistingTelegramIdentity() {
+  await protectSecretFile(path.join(TARGET_DIR, ".env"));
   const envText = readFileSync(path.join(TARGET_DIR, ".env"), "utf8");
   const tokenLine = envText.split(/\r?\n/).find((line) => line.startsWith("TELEGRAM_BOT_TOKEN="));
   const token = tokenLine?.slice("TELEGRAM_BOT_TOKEN=".length).trim() || "";
@@ -391,7 +387,7 @@ async function main() {
   print(`\n${color.dim}To update later, run the same one-line installer in this folder. Your .env and data are preserved.${color.reset}`);
 }
 
-main().catch((error) => {
+withManagementLock(TARGET_DIR, main).catch((error) => {
   print(`\n${color.red}${color.bold}INSTALLATION FAILED${color.reset}`);
   print(`${color.red}${error instanceof Error ? error.message : String(error)}${color.reset}`);
   process.exitCode = 1;

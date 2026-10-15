@@ -9,6 +9,7 @@ import process from "node:process";
 import { createInterface } from "node:readline/promises";
 import { randomBytes } from "node:crypto";
 import { planUninstall, removeInstallation } from "./uninstall-files.mjs";
+import { withManagementLock, runtimeEnvironment } from "./management-lock.mjs";
 
 const APP_DIR = process.cwd();
 const RUNTIME_DIR = path.join(APP_DIR, ".runtime");
@@ -112,7 +113,7 @@ async function startBot() {
     detached: true,
     windowsHide: true,
     stdio: ["ignore", logFd, logFd],
-    env: { ...process.env },
+    env: runtimeEnvironment(),
   });
   let spawnError;
   child.on("error", error => { spawnError = error; });
@@ -258,13 +259,13 @@ async function menu() {
     const answer = (await rl.question(`${color.bold}Selection:${color.reset} `)).trim();
     rl.close();
     try {
-      if (answer === "1") await startBot();
-      else if (answer === "2") await stopBot();
-      else if (answer === "3") await restartBot();
+      if (answer === "1") await withManagementLock(APP_DIR, startBot);
+      else if (answer === "2") await withManagementLock(APP_DIR, stopBot);
+      else if (answer === "3") await withManagementLock(APP_DIR, restartBot);
       else if (answer === "4") await showStatus();
       else if (answer === "5") showLogs();
-      else if (answer === "6") await reconfigure();
-      else if (answer === "7") { if (await uninstall()) return; }
+      else if (answer === "6") await withManagementLock(APP_DIR, reconfigure);
+      else if (answer === "7") { if (await withManagementLock(APP_DIR, uninstall)) return; }
       else if (answer === "0") return;
       else { print(`${color.yellow}Choose a number from 0 to 7.${color.reset}`); await sleep(900); continue; }
     } catch (error) {
@@ -277,12 +278,12 @@ async function menu() {
 async function main() {
   if (process.platform !== "win32") fail("This manager is for local Windows installations.");
   const command = (process.argv[2] || "menu").toLowerCase();
-  if (command === "start") return startBot();
-  if (command === "stop") return stopBot();
-  if (command === "restart") return restartBot();
+  if (command === "start") return withManagementLock(APP_DIR, startBot);
+  if (command === "stop") return withManagementLock(APP_DIR, stopBot);
+  if (command === "restart") return withManagementLock(APP_DIR, restartBot);
   if (command === "status") return showStatus();
   if (command === "logs") return showLogs();
-  if (command === "uninstall") return uninstall();
+  if (command === "uninstall") return withManagementLock(APP_DIR, uninstall);
   if (command === "menu") return menu();
   fail("Unknown command. Use start, stop, restart, status, logs, or no argument for the menu.");
 }

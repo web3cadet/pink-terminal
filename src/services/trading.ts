@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import type { AppConfig } from "../config.js";
 import type { ExchangeGateway, OrderDraft, OrderPreview, OrderReceipt, OrderSummary, TriggerDraft } from "../domain.js";
 import type { Logger } from "../log.js";
@@ -15,8 +15,16 @@ export interface PreparedIntent {
   preview?: OrderPreview;
 }
 
+export function confirmationAccountContext(config: AppConfig): string {
+  return createHash("sha256").update(JSON.stringify([
+    "pink-confirmation-v1", (config.apiUrl ?? "").replace(/\/$/, ""), config.apiKeyId ?? "",
+    (config.apiSecretHex ?? "").replace(/^0x/i, "").toLowerCase(), config.subaccountId ?? "", config.tradingMode
+  ])).digest("hex");
+}
+
 export class TradingService {
   private readonly risk: RiskGuard;
+  private readonly accountContext: string;
 
   constructor(
     private readonly config: AppConfig,
@@ -25,6 +33,8 @@ export class TradingService {
     private readonly logger: Logger
   ) {
     this.risk = new RiskGuard(config);
+    this.accountContext = confirmationAccountContext(config);
+    this.db.invalidateOtherAccountConfirmations(this.accountContext);
   }
 
   async prepareOrder(chatId: number, userId: number, draft: OrderDraft): Promise<PreparedIntent> {
@@ -41,7 +51,7 @@ export class TradingService {
     this.db.invalidateConfirmations(chatId, userId, "order");
     this.db.createIntent({
       id, chatId, userId, operation: "order", clientId, payload: draft as unknown as Record<string, unknown>,
-      preview: preview.raw, status: "previewed", expiresAt
+      preview: preview.raw, status: "previewed", expiresAt, accountContext: this.accountContext
     });
     return { id, clientId, expiresAt, preview };
   }
@@ -81,7 +91,7 @@ export class TradingService {
     this.db.invalidateConfirmations(chatId, userId, "trigger");
     this.db.createIntent({
       id, chatId, userId, operation: "trigger", clientId, payload: draft as unknown as Record<string, unknown>,
-      preview: null, status: "previewed", expiresAt
+      preview: null, status: "previewed", expiresAt, accountContext: this.accountContext
     });
     return { id, clientId, expiresAt };
   }
@@ -199,6 +209,10 @@ export class TradingService {
   private requireOwnedIntent(id: string, chatId: number, userId: number, operation: "order" | "trigger"): IntentRecord {
     const intent = this.db.getIntent(id);
     if (!intent || intent.chatId !== chatId || intent.userId !== userId || intent.operation !== operation) throw new Error("Confirmation not found");
+    if (intent.accountContext !== this.accountContext) {
+      this.db.transitionIntent(id, ["previewed"], "superseded");
+      throw new Error("API configuration changed. Create a new confirmation for the current account.");
+    }
     return intent;
   }
 }
