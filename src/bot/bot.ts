@@ -28,6 +28,20 @@ export function createTelegramBot(deps: {
   const { config, gateway, database, trading, logger } = deps;
   const bot = new Bot(config.telegramToken);
   const accountContext = confirmationAccountContext(config);
+  // Reuse only a just-displayed balance while navigating the same pair. Order
+  // sizing, percentages, preview and submission always fetch their own data.
+  const navigationBalances = new Map<number, { symbolId: number; text: string; expiresAt: number }>();
+  const balancesForNavigation = async (ctx: Context, pair: PairConfig, fresh = false): Promise<string> => {
+    const { chatId } = requireIds(ctx);
+    const cached = navigationBalances.get(chatId);
+    if (!fresh && cached?.symbolId === pair.symbolId && cached.expiresAt > Date.now()) return cached.text;
+    const fallback = `\n<b>Available to trade</b>\n${escapeHtml(pair.baseAsset)}: unavailable\n${escapeHtml(pair.quoteAsset)}: unavailable\n`;
+    const started = Date.now();
+    const text = await displayData(orderBalances(gateway, pair), fallback, 1_000);
+    if (!text.includes(": unavailable")) navigationBalances.set(chatId, { symbolId: pair.symbolId, text, expiresAt: started + 5_000 });
+    else navigationBalances.delete(chatId);
+    return text;
+  };
   const confirmationEnabled = (ctx: Context) => {
     const ids = requireIds(ctx);
     return database.orderConfirmationEnabled(ids.chatId, ids.userId, accountContext);
@@ -283,13 +297,14 @@ export function createTelegramBot(deps: {
       return;
     }
     const callbackData = ctx.callbackQuery?.data;
-    const navigation = callbackData && /^(?:pair:\d+|pairtf:\d+:(?:1m|5m|1h|4h)|book:\d+:(?:5|10|20)|markets:\d+)$/.test(callbackData);
+    const navigation = callbackData && /^(?:pair:\d+|pairtf:\d+:(?:1m|5m|1h|4h)|book:\d+:(?:5|10|20)|markets:\d+|ordpair:\d+|orderpairside:\d+:(?:BUY|SELL)|ordside:(?:BUY|SELL))$/.test(callbackData);
     const navigationKey = navigation ? `${chatId}:${userId}:${ctx.callbackQuery?.message?.message_id}:${callbackData}` : undefined;
     if (navigationKey) {
       const duplicate = pendingNavigation.has(navigationKey);
       pendingNavigation.add(navigationKey);
-      // Acknowledge before waiting for an in-flight edit or this chat's queue.
-      await ctx.answerCallbackQuery({ text: "Loading…" }).catch(() => undefined);
+      // The spinner acknowledgement is not the action. Its network delay or
+      // expiry must not block navigation or reorder updates before queuing.
+      void ctx.answerCallbackQuery().catch(() => undefined);
       if (duplicate) return;
     }
     // Serialize updates from this chat so repeated amount messages cannot create two immediate orders.
@@ -299,6 +314,7 @@ export function createTelegramBot(deps: {
     chatUpdates.set(chatId, current);
     await previous;
     try {
+      if (!navigation) navigationBalances.delete(chatId);
       if (ctx.message?.text?.startsWith("/") || callbackData === "home" || callbackData === "markets:0") clearFlow(ctx, database);
       if ((callbackData && !callbackData.startsWith("live:")) || ctx.message) await stopLiveForChat(chatId);
       await next();
@@ -420,11 +436,11 @@ export function createTelegramBot(deps: {
   });
 
   bot.callbackQuery(/^pair:(\d+)$/, async (ctx) => {
-    await showPair(ctx, gateway, Number(ctx.match[1]), "5m");
+    await showPair(ctx, gateway, Number(ctx.match[1]), "5m", pair => balancesForNavigation(ctx, pair, true));
   });
 
   bot.callbackQuery(/^pairtf:(\d+):(1m|5m|1h|4h)$/, async (ctx) => {
-    await showPair(ctx, gateway, Number(ctx.match[1]), ctx.match[2]!);
+    await showPair(ctx, gateway, Number(ctx.match[1]), ctx.match[2]!, pair => balancesForNavigation(ctx, pair, true));
   });
 
   bot.callbackQuery(/^book:(\d+):(5|10|20)$/, async (ctx) => {
@@ -475,23 +491,20 @@ export function createTelegramBot(deps: {
     await editOrReply(ctx, "<b>New order · 1/5</b>\nChoose a pair:", pairsKeyboard(catalog.pairs, Number(ctx.match[1]), "ordpair", PAGE_SIZE));
   });
   bot.callbackQuery(/^ordpair:(\d+)$/, async (ctx) => {
-    await ctx.answerCallbackQuery();
     const pair = requirePair((await gateway.getCatalog()).pairs, Number(ctx.match[1]));
     saveFlow(ctx, database, { flow: "order", step: "side", data: { symbolId: pair.symbolId, symbol: pair.symbol } });
-    await editOrReply(ctx, `${heading("New order · direction")}\n${pairLink(pair.symbol)}\n\n${await orderBalances(gateway, pair)}\n\n<b>What do you want to do?</b>`, new InlineKeyboard().text(`🟢 Buy · ${pair.baseAsset}`, "ordside:BUY").text(`🔴 Sell · ${pair.baseAsset}`, "ordside:SELL").row().text("✕ Cancel order", "cancel-flow"));
+    await editOrReply(ctx, `${heading("New order · direction")}\n${pairLink(pair.symbol)}\n\n${await balancesForNavigation(ctx, pair)}\n\n<b>What do you want to do?</b>`, new InlineKeyboard().text(`🟢 Buy · ${pair.baseAsset}`, "ordside:BUY").text(`🔴 Sell · ${pair.baseAsset}`, "ordside:SELL").row().text("✕ Cancel order", "cancel-flow"));
   });
   bot.callbackQuery(/^orderpairside:(\d+):(BUY|SELL)$/, async (ctx) => {
-    await ctx.answerCallbackQuery();
     const pair = requirePair((await gateway.getCatalog()).pairs, Number(ctx.match[1]));
     saveFlow(ctx, database, { flow: "order", step: "kind", data: { symbolId: pair.symbolId, symbol: pair.symbol, side: ctx.match[2] } });
-    await showOrderKinds(ctx, pair.symbol, ctx.match[2] as OrderSide, await orderBalances(gateway, pair));
+    await showOrderKinds(ctx, pair.symbol, ctx.match[2] as OrderSide, await balancesForNavigation(ctx, pair));
   });
   bot.callbackQuery(/^ordside:(BUY|SELL)$/, async (ctx) => {
-    await ctx.answerCallbackQuery();
     const state = requireFlow(ctx, database, "order");
     state.data.side = ctx.match[1]; state.step = "kind"; saveFlow(ctx, database, state);
     const pair = requirePair((await gateway.getCatalog()).pairs, Number(state.data.symbolId));
-    await showOrderKinds(ctx, String(state.data.symbol), ctx.match[1] as OrderSide, await orderBalances(gateway, pair));
+    await showOrderKinds(ctx, String(state.data.symbol), ctx.match[1] as OrderSide, await balancesForNavigation(ctx, pair));
   });
   bot.callbackQuery(/^ordkind:(MARKET_IOC|LIMIT_GTC|LIMIT_GTD|LIMIT_IOC|LIMIT_FOK)$/, async (ctx) => {
     await ctx.answerCallbackQuery();
@@ -971,18 +984,18 @@ export async function renderTerminalSnapshot(gateway: ExchangeGateway, config: A
 }
 
 // Display-only deadline. Trading validation and submission never use these fallbacks.
-async function displayData<T>(request: Promise<T>, fallback: T): Promise<T> {
+async function displayData<T>(request: Promise<T>, fallback: T, timeoutMs = 3_000): Promise<T> {
   let timer: NodeJS.Timeout | undefined;
   try {
-    return await Promise.race([request.catch(() => fallback), new Promise<T>(resolve => { timer = setTimeout(() => resolve(fallback), 3_000); })]);
+    return await Promise.race([request.catch(() => fallback), new Promise<T>(resolve => { timer = setTimeout(() => resolve(fallback), timeoutMs); })]);
   } finally { if (timer) clearTimeout(timer); }
 }
 
-async function showPair(ctx: Context, gateway: ExchangeGateway, symbolId: number, timeframe: string): Promise<void> {
+async function showPair(ctx: Context, gateway: ExchangeGateway, symbolId: number, timeframe: string, readBalances: (pair: PairConfig) => Promise<string>): Promise<void> {
   const catalogRequest = gateway.getCatalog();
   const balancesRequest = catalogRequest.then(catalog => {
     const pair = requirePair(catalog.pairs, symbolId);
-    return displayData(orderBalances(gateway, pair), `\n<b>Available to trade</b>\n${escapeHtml(pair.baseAsset)}: unavailable\n${escapeHtml(pair.quoteAsset)}: unavailable\n`);
+    return readBalances(pair);
   });
   const data = Promise.all([
     catalogRequest, displayData(gateway.listMarketOverview(), []),

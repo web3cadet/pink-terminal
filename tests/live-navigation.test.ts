@@ -8,16 +8,19 @@ import type { TradingService } from "../src/services/trading.js";
 
 function deferred() { let resolve!: () => void; const promise = new Promise<void>(r => { resolve = r; }); return { promise, resolve }; }
 describe("single-click navigation during live updates", () => {
-  it.each(["snapshot", "edit", "slow data", "unchanged", "fast data"])("handles %s without needing a second click", async stage => {
+  it.each(["snapshot", "edit", "slow data", "unchanged", "fast data", "slow acknowledgement", "expired acknowledgement", "cached buy balance", "cached sell balance", "slow buy balance", "slow sell balance", "duplicate buy", "duplicate sell", "wizard buy", "wizard sell", "navigation order"])("handles %s without needing a second click", async stage => {
     vi.useFakeTimers();
     const db = new AppDatabase(":memory:");
     const gate = deferred(), entered = deferred();
     let delayNext = false;
     const overview = [{ symbolId: 1, lastPrice: "500", bestAsk: "500", bestBid: "499", change24hBps: 100 }];
     const getCandles = vi.fn(async () => { if (stage === "slow data") { entered.resolve(); await gate.promise; } return []; });
-    const listBalances = vi.fn(async () => []);
+    const listBalances = vi.fn(async () => {
+      if (delayNext && /balance|duplicate/.test(stage)) { entered.resolve(); await gate.promise; }
+      return [];
+    });
     const gateway = {
-      getCatalog: async () => ({ pairs: [{ symbolId: 1, symbol: "BNB-USDT", baseAsset: "BNB", quoteAsset: "USDT", status: "PAIR_STATUS_ENABLED", minQtyBase: "0.01", minNotionalQuote: "5" }], assets: [] }),
+      getCatalog: async () => ({ pairs: [{ symbolId: 1, symbol: "BNB-USDT", baseAsset: "BNB", quoteAsset: "USDT", status: "PAIR_STATUS_ENABLED", minQtyBase: "0.01", minNotionalQuote: "5" }], assets: [{ asset: "BNB", ledgerId: 1 }, { asset: "USDT", ledgerId: 2 }] }),
       listMarketOverview: async () => { if (delayNext && stage === "snapshot") { delayNext = false; entered.resolve(); await gate.promise; } return overview; },
       getOrderbook: async () => ({ bids: [], asks: [] }), getCandles, listBalances
     } as unknown as ExchangeGateway;
@@ -27,7 +30,11 @@ describe("single-click navigation during live updates", () => {
     const applied: string[] = [];
     const acknowledgements: string[] = [];
     bot.api.config.use(async (_previous, method, payload) => {
-      if (method === "answerCallbackQuery") acknowledgements.push(String((payload as { callback_query_id: string }).callback_query_id));
+      if (method === "answerCallbackQuery") {
+        acknowledgements.push(String((payload as { callback_query_id: string }).callback_query_id));
+        if (delayNext && (stage === "slow acknowledgement" || stage === "navigation order")) { delayNext = false; entered.resolve(); await gate.promise; }
+        if (delayNext && stage === "expired acknowledgement") return { ok: false, error_code: 400, description: "Bad Request: query is too old and response timeout expired" } as never;
+      }
       if (method === "editMessageText") {
         if (delayNext && stage === "edit") { delayNext = false; entered.resolve(); await gate.promise; }
         applied.push(String((payload as { text: string }).text));
@@ -38,6 +45,65 @@ describe("single-click navigation during live updates", () => {
     const click = (data: string) => bot.handleUpdate({ update_id: ++updateId, callback_query: { id: String(updateId), chat_instance: "1", from: { id: 1, is_bot: false, first_name: "Test" }, data, message: { message_id: 100, date: 1, chat: { id: 1, type: "private" }, text: "panel" } } });
     try {
       await click("markets:0");
+      if (stage === "navigation order") {
+        delayNext = true;
+        const pair = click("pair:1");
+        await entered.promise;
+        const side = click("orderpairside:1:SELL");
+        await vi.advanceTimersByTimeAsync(0);
+        gate.resolve(); await Promise.all([pair, side]);
+        expect(applied.at(-1)).toContain("New order · execution");
+        expect(db.getWizard(1, 1)?.data.side).toBe("SELL");
+        return;
+      }
+      if (stage.startsWith("wizard")) {
+        await click("ordpair:1");
+        expect(applied.at(-1)).toContain("New order · direction");
+        await click(`ordside:${stage.endsWith("buy") ? "BUY" : "SELL"}`);
+        expect(applied.at(-1)).toContain("New order · execution");
+        expect(listBalances).toHaveBeenCalledOnce();
+        return;
+      }
+      if (stage.startsWith("duplicate")) {
+        delayNext = true;
+        const data = `orderpairside:1:${stage.endsWith("buy") ? "BUY" : "SELL"}`;
+        const selected = click(data);
+        await entered.promise;
+        await click(data);
+        expect(listBalances).toHaveBeenCalledOnce();
+        expect(acknowledgements).toEqual(["1", "2", "3"]);
+        gate.resolve(); await selected;
+        expect(applied.filter(text => text.includes("New order · execution"))).toHaveLength(1);
+        return;
+      }
+      if (stage === "slow acknowledgement") {
+        delayNext = true;
+        const selected = click("pair:1");
+        await entered.promise; await vi.advanceTimersByTimeAsync(0);
+        const firstClickRendered = applied.at(-1)?.includes("Market overview");
+        gate.resolve(); await selected;
+        expect(firstClickRendered).toBe(true);
+        return;
+      }
+      if (stage === "expired acknowledgement") {
+        delayNext = true;
+        await click("orderpairside:1:BUY");
+        expect(applied.at(-1)).toContain("New order · execution");
+        return;
+      }
+      if (stage.includes("balance")) {
+        await click("pair:1");
+        if (stage.startsWith("slow")) await vi.advanceTimersByTimeAsync(6000);
+        delayNext = true;
+        const selected = click(`orderpairside:1:${stage.includes("buy") ? "BUY" : "SELL"}`);
+        await vi.advanceTimersByTimeAsync(1100);
+        const firstClickRendered = applied.at(-1)?.includes("New order · execution");
+        const reads = listBalances.mock.calls.length;
+        gate.resolve(); await selected;
+        expect(firstClickRendered).toBe(true);
+        expect(reads).toBe(stage.startsWith("cached") ? 1 : 2);
+        return;
+      }
       if (stage === "fast data") {
         await click("pair:1");
         expect(applied.filter(text => text.includes("Opening market"))).toHaveLength(0);
