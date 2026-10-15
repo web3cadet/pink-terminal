@@ -26,6 +26,12 @@ export interface IntentRecord {
   updatedAt: number;
 }
 
+export interface ControlAction {
+  kind: "cancel_order_prompt" | "cancel_order" | "cancel_trigger_prompt" | "cancel_trigger" | "pause_trigger" | "resume_trigger" | "cancel_all";
+  targetId: string;
+  symbolId: number;
+}
+
 export class AppDatabase {
   private readonly db: DatabaseSync;
 
@@ -38,6 +44,23 @@ export class AppDatabase {
   }
 
   close(): void { this.db.close(); }
+
+  createControlAction(id: string, chatId: number, userId: number, context: string, action: ControlAction, expiresAt: number): void {
+    this.db.prepare("DELETE FROM control_actions WHERE expires_at <= ?").run(Date.now());
+    this.db.prepare("INSERT INTO control_actions (id, chat_id, user_id, account_context, payload_json, expires_at) VALUES (?, ?, ?, ?, ?, ?)")
+      .run(id, chatId, userId, context, JSON.stringify(action), expiresAt);
+  }
+
+  consumeControlAction(id: string, chatId: number, userId: number, context: string): ControlAction | null {
+    // Atomic consumption before any await or exchange request prevents double submission.
+    const row = this.db.prepare("DELETE FROM control_actions WHERE id = ? AND chat_id = ? AND user_id = ? AND account_context = ? AND expires_at > ? RETURNING payload_json")
+      .get(id, chatId, userId, context, Date.now()) as { payload_json: string } | undefined;
+    return row ? JSON.parse(row.payload_json) as ControlAction : null;
+  }
+
+  invalidateControlActions(chatId: number, userId: number): void {
+    this.db.prepare("DELETE FROM control_actions WHERE chat_id = ? AND user_id = ?").run(chatId, userId);
+  }
 
   saveWizard(chatId: number, userId: number, state: WizardState): void {
     this.db.prepare(`
@@ -76,6 +99,7 @@ export class AppDatabase {
   }
 
   invalidateOtherAccountConfirmations(context: string): void {
+    this.db.prepare("DELETE FROM control_actions WHERE account_context != ?").run(context);
     this.db.prepare("UPDATE operation_intents SET status = 'superseded', updated_at = ? WHERE status = 'previewed' AND (account_context IS NULL OR account_context != ?)")
       .run(Date.now(), context);
   }
@@ -201,6 +225,14 @@ export class AppDatabase {
 
   private migrate(): void {
     this.db.exec(`
+      CREATE TABLE IF NOT EXISTS control_actions (
+        id TEXT PRIMARY KEY,
+        chat_id INTEGER NOT NULL,
+        user_id INTEGER NOT NULL,
+        account_context TEXT NOT NULL,
+        payload_json TEXT NOT NULL,
+        expires_at INTEGER NOT NULL
+      );
       CREATE TABLE IF NOT EXISTS wizard_sessions (
         chat_id INTEGER NOT NULL,
         user_id INTEGER NOT NULL,

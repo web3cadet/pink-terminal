@@ -10,6 +10,9 @@ delete process.env.PINK_CONTROL_TOKEN;
 if (!/^[a-f0-9]{64}$/.test(token ?? "")) throw new Error("Start the bot through its local manager.");
 const stateFile = path.resolve(".runtime", "macos-bot.json");
 let stopping = false;
+let ready = false;
+process.on("pink-terminal-ready", () => { ready = true; });
+process.on("pink-terminal-stopping", () => { ready = false; });
 const server = createServer(socket => {
   let buffer = "";
   socket.setEncoding("utf8");
@@ -25,6 +28,7 @@ const server = createServer(socket => {
     if (typeof request.token !== "string" || !/^[a-f0-9]{64}$/.test(request.token)
       || !timingSafeEqual(Buffer.from(token), Buffer.from(request.token))) return socket.destroy();
     if (request.command === "ping") socket.end(JSON.stringify({ pid: process.pid, status: "pong" }) + "\n");
+    else if (request.command === "ready") socket.end(JSON.stringify({ pid: process.pid, status: ready && !stopping ? "ready" : "starting" }) + "\n");
     else if (request.command === "stop") {
       socket.end(JSON.stringify({ pid: process.pid, status: "stopping" }) + "\n");
       if (!stopping) {

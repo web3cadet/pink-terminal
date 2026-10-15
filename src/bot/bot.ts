@@ -3,8 +3,9 @@ import { Bot, GrammyError, HttpError, InlineKeyboard, type Context } from "gramm
 import type { AppConfig } from "../config.js";
 import type { ExchangeGateway, OrderDraft, OrderSide, PairConfig, TriggerDraft } from "../domain.js";
 import type { Logger } from "../log.js";
-import type { AppDatabase, WizardState } from "../storage/database.js";
+import type { AppDatabase, WizardState, ControlAction } from "../storage/database.js";
 import type { TradingService } from "../services/trading.js";
+import { confirmationAccountContext } from "../services/trading.js";
 import { decimalToScaled, scaledToDecimal } from "../utils/decimal.js";
 import { escapeHtml, shorten } from "../utils/html.js";
 import { formatOrderDraft, formatTriggerDraft, mainKeyboard, orderKindCard, orderKindKeyboard, orderOptionsKeyboard, pairsKeyboard, sparkline } from "./ui.js";
@@ -25,6 +26,12 @@ export function createTelegramBot(deps: {
 }): Bot {
   const { config, gateway, database, trading, logger } = deps;
   const bot = new Bot(config.telegramToken);
+  const controlButton = (ctx: Context, action: ControlAction): string => {
+    const ids = requireIds(ctx);
+    const id = randomUUID();
+    database.createControlAction(id, ids.chatId, ids.userId, confirmationAccountContext(config), action, Date.now() + config.confirmationTtlSeconds * 1000);
+    return `ctl:${id}`;
+  };
   bot.api.config.use(async (previous, method, payload, signal) => {
     if (method === "sendMessage" || method === "editMessageText") Object.assign(payload, { link_preview_options: { is_disabled: true } });
     return previous(method, payload, signal);
@@ -435,6 +442,8 @@ export function createTelegramBot(deps: {
   });
 
   bot.callbackQuery(/^orders:(open|history)(?::(\d+))?$/, async (ctx) => {
+    const ids = requireIds(ctx);
+    database.invalidateControlActions(ids.chatId, ids.userId);
     await ctx.answerCallbackQuery({ text: "Loading orders…" });
     const mode = ctx.match[1];
     const [catalog, receivedOrders] = await Promise.all([gateway.getCatalog(), mode === "open" ? gateway.listOpenOrders() : gateway.listOrderHistory()]);
@@ -452,7 +461,7 @@ export function createTelegramBot(deps: {
     const keyboard = new InlineKeyboard();
     for (const [index, order] of visible.entries()) {
       keyboard.text(`View order · ${index + 1}`, `od:${order.orderId}`);
-      if (mode === "open" && order.clientOrderId && config.tradingMode !== "read_only") keyboard.text("Cancel order", `oc:${order.symbolId}:${order.clientOrderId}`);
+      if (mode === "open" && order.clientOrderId && config.tradingMode !== "read_only") keyboard.text("Cancel order", controlButton(ctx, { kind: "cancel_order_prompt", symbolId: order.symbolId, targetId: order.clientOrderId }));
       keyboard.row();
     }
     if (page > 0) keyboard.text("‹ Previous", `orders:${mode}:${page - 1}`);
@@ -482,7 +491,7 @@ export function createTelegramBot(deps: {
       return `• <code>${escapeHtml(execution.qty)} @ ${escapeHtml(execution.price)}</code>${role}${time}`;
     });
     const keyboard = new InlineKeyboard().text("↻ Refresh order", `od:${order.orderId}`);
-    if (order.clientOrderId && isOrderOpen(order.status) && config.tradingMode !== "read_only") keyboard.text("Cancel order", `oc:${order.symbolId}:${order.clientOrderId}`);
+    if (order.clientOrderId && isOrderOpen(order.status) && config.tradingMode !== "read_only") keyboard.text("Cancel order", controlButton(ctx, { kind: "cancel_order_prompt", symbolId: order.symbolId, targetId: order.clientOrderId }));
     keyboard.row().text("‹ Open orders", "orders:open").text("Order history", "orders:history").row().text("‹ Overview", "home");
     await editOrReply(ctx, [
       heading("Order details"), pair ? pairLink(pair.symbol) : `#${order.symbolId}`,
@@ -507,39 +516,54 @@ export function createTelegramBot(deps: {
       "<i>Cumulative quantity is authoritative. Individual execution history can be eventually consistent.</i>"
     ].filter(line => line !== null).join("\n"), keyboard);
   });
-  bot.callbackQuery(/^oc:(\d+):(.+)$/, async (ctx) => {
-    await ctx.answerCallbackQuery();
-    await ctx.reply(
-      `Cancel order <code>${escapeHtml(ctx.match[2]!)}</code>? It may fill before the cancellation reaches the exchange.`,
-      { parse_mode: "HTML", reply_markup: new InlineKeyboard().text("Confirm cancellation", `occ:${ctx.match[1]}:${ctx.match[2]}`).text("Keep order", "orders:open") }
-    );
-  });
-  bot.callbackQuery(/^occ:(\d+):(.+)$/, async (ctx) => {
-    await ctx.answerCallbackQuery({ text: "Canceling…" });
-    await gateway.cancelOrder(ctx.match[2]!, Number(ctx.match[1]));
-    await ctx.reply(`Cancel submitted for <code>${escapeHtml(ctx.match[2])}</code>. Final state can race with a fill; refresh Orders.`, { parse_mode: "HTML", reply_markup: new InlineKeyboard().text("↻ Refresh orders", "orders:open") });
+  // Old messages have no account/owner/expiry binding. Never execute their writes.
+  bot.callbackQuery(/^(?:(?:oc|occ|tp|tr|tc|tcc):|oca:confirm$)/, async ctx => {
+    await ctx.answerCallbackQuery({ text: "This button has expired. Refresh Orders or Strategies.", show_alert: true });
   });
   bot.callbackQuery("oca:preview", async (ctx) => {
+    if (config.tradingMode === "read_only") { await ctx.answerCallbackQuery({ text: "Read-only mode", show_alert: true }); return; }
     await ctx.answerCallbackQuery({ text: "Checking open orders…" });
     const ids = requireIds(ctx);
+    database.invalidateControlActions(ids.chatId, ids.userId);
     const preview = await gateway.cancelAll([], true, randomUUID());
     const requestId = randomUUID();
-    database.saveWizard(ids.chatId, ids.userId, { flow: "cancel_all", step: "confirm", data: { requestId } });
     await editOrReply(ctx, [
       "<b>⚠️ Cancel every open order?</b>",
       "",
       `Polyester dry-run response: <code>${escapeHtml(shorten(JSON.stringify(preview), 900))}</code>`,
       "",
       "A fill can still race with cancellation. This confirmation can be used once."
-    ].join("\n"), new InlineKeyboard().text("Confirm · cancel all", "oca:confirm").row().text("Keep all orders", "orders:open"));
+    ].join("\n"), new InlineKeyboard().text("Confirm · cancel all", controlButton(ctx, { kind: "cancel_all", symbolId: 0, targetId: requestId })).row().text("Keep all orders", "orders:open"));
   });
-  bot.callbackQuery("oca:confirm", async (ctx) => {
-    await ctx.answerCallbackQuery({ text: "Submitting cancellations…" });
+  bot.callbackQuery(/^ctl:([a-f0-9-]{36})$/, async (ctx) => {
     const ids = requireIds(ctx);
-    const state = requireFlow(ctx, database, "cancel_all");
-    if (state.step !== "confirm" || typeof state.data.requestId !== "string") throw new Error("Cancel-all confirmation expired");
-    const requestId = state.data.requestId;
-    database.clearWizard(ids.chatId, ids.userId);
+    if (config.tradingMode === "read_only") { await ctx.answerCallbackQuery({ text: "Read-only mode", show_alert: true }); return; }
+    const action = database.consumeControlAction(ctx.match[1]!, ids.chatId, ids.userId, confirmationAccountContext(config));
+    if (!action) { await ctx.answerCallbackQuery({ text: "This button has expired or belongs to another user or configuration. Refresh Orders or Strategies.", show_alert: true }); return; }
+    await ctx.answerCallbackQuery();
+    const { kind, targetId, symbolId } = action;
+    if (kind === "cancel_order_prompt" || kind === "cancel_trigger_prompt") {
+      const order = kind === "cancel_order_prompt";
+      await ctx.reply(`Cancel ${order ? "order" : "strategy"} <code>${escapeHtml(targetId)}</code>?${order ? " It may fill before cancellation reaches the exchange." : ""}`, {
+        parse_mode: "HTML", reply_markup: new InlineKeyboard()
+          .text("Confirm cancellation", controlButton(ctx, { ...action, kind: order ? "cancel_order" : "cancel_trigger" }))
+          .text(order ? "Keep order" : "Keep strategy", order ? "orders:open" : "triggers:list")
+      });
+      return;
+    }
+    if (kind !== "cancel_all") {
+      try {
+        if (kind === "cancel_order") await gateway.cancelOrder(targetId, symbolId);
+        if (kind === "cancel_trigger") await gateway.cancelTrigger(targetId, symbolId);
+        if (kind === "pause_trigger") await gateway.pauseTrigger(targetId, symbolId);
+        if (kind === "resume_trigger") await gateway.resumeTrigger(targetId, symbolId);
+      } catch {
+        throw new Error("The update could not be confirmed. Refresh Orders or Strategies to check its final state before trying again.");
+      }
+      await ctx.reply("Update submitted. Refresh to confirm final state.", { reply_markup: new InlineKeyboard().text("↻ Refresh", kind === "cancel_order" ? "orders:open" : "triggers:list") });
+      return;
+    }
+    const requestId = targetId;
     database.rememberStatus(`cancel_all:${requestId}`, "sending");
     try {
       const result = await gateway.cancelAll([], false, requestId);
@@ -552,6 +576,8 @@ export function createTelegramBot(deps: {
   });
 
   bot.callbackQuery(/^triggers:(list|history)(?::(\d+))?$/, async (ctx) => {
+    const ids = requireIds(ctx);
+    database.invalidateControlActions(ids.chatId, ids.userId);
     await ctx.answerCallbackQuery({ text: "Loading strategies…" });
     const [catalog, triggers] = await Promise.all([gateway.getCatalog(), gateway.listTriggers()]);
     const pairMap = new Map(catalog.pairs.map((pair) => [pair.symbolId, pair.symbol]));
@@ -580,8 +606,8 @@ export function createTelegramBot(deps: {
     const keyboard = new InlineKeyboard();
     const terminal = /COMPLETED|CANCELED|CANCELLED|FAILED|EXPIRED/.test(trigger.status);
     if (!terminal && config.tradingMode !== "read_only") {
-      keyboard.text(trigger.status.includes("PAUSED") ? "Resume" : "Pause", `${trigger.status.includes("PAUSED") ? "tr" : "tp"}:${trigger.symbolId}:${trigger.triggerId}`)
-        .text("Cancel", `tc:${trigger.symbolId}:${trigger.triggerId}`).row();
+      keyboard.text(trigger.status.includes("PAUSED") ? "Resume" : "Pause", controlButton(ctx, { kind: trigger.status.includes("PAUSED") ? "resume_trigger" : "pause_trigger", symbolId: trigger.symbolId, targetId: trigger.triggerId }))
+        .text("Cancel", controlButton(ctx, { kind: "cancel_trigger_prompt", symbolId: trigger.symbolId, targetId: trigger.triggerId })).row();
     }
     keyboard.text("↻ Refresh", `td:${trigger.triggerId}`).row().text("‹ Strategies", "triggers:list");
     await editOrReply(ctx, [terminalHeading("Strategy status"),
@@ -658,26 +684,6 @@ export function createTelegramBot(deps: {
       "Open Strategies to verify its current status."
     ].filter(line => line !== null).join("\n"), new InlineKeyboard().text("⚡ View strategies", "triggers:list").row().text("‹ Terminal", "home"));
   });
-  bot.callbackQuery(/^(tp|tr|tc):(\d+):(.+)$/, async (ctx) => {
-    const action = ctx.match[1]; const symbolId = Number(ctx.match[2]); const triggerId = ctx.match[3]!;
-    if (action === "tc") {
-      await ctx.answerCallbackQuery();
-      await ctx.reply(
-        `Cancel trigger <code>${escapeHtml(triggerId)}</code>?`,
-        { parse_mode: "HTML", reply_markup: new InlineKeyboard().text("Confirm cancellation", `tcc:${symbolId}:${triggerId}`).text("Keep strategy", "triggers:list") }
-      );
-      return;
-    }
-    await ctx.answerCallbackQuery({ text: "Submitting…" });
-    if (action === "tp") await gateway.pauseTrigger(triggerId, symbolId);
-    if (action === "tr") await gateway.resumeTrigger(triggerId, symbolId);
-    await ctx.reply("Strategy update submitted. Refresh to confirm final state.", { reply_markup: new InlineKeyboard().text("↻ Refresh strategies", "triggers:list") });
-  });
-  bot.callbackQuery(/^tcc:(\d+):(.+)$/, async (ctx) => {
-    await ctx.answerCallbackQuery({ text: "Canceling…" });
-    await gateway.cancelTrigger(ctx.match[2]!, Number(ctx.match[1]));
-    await ctx.reply("Strategy cancellation submitted. Refresh to confirm final state.", { reply_markup: new InlineKeyboard().text("↻ Refresh strategies", "triggers:list") });
-  });
 
   bot.callbackQuery("cancel-flow", async (ctx) => {
     await ctx.answerCallbackQuery(); clearFlow(ctx, database); await showHome(ctx, config, gateway, database, true);
@@ -752,7 +758,7 @@ export function createTelegramBot(deps: {
         "The API signature is valid, but this key has no saved access policy.",
         `Current key: <code>${escapeHtml(shorten(config.apiKeyId ?? "not configured", 22))}</code>`,
         "",
-        "Open this exact key in Polyester, set <b>Balances → Read</b> and <b>Spot Trading → Read</b>, then save/apply the policy. Keep transfers and withdrawals set to None."
+        `Open this exact key in Polyester, set <b>Balances → Read</b> and <b>Spot Trading → ${config.tradingMode === "read_only" ? "Read" : "Write"}</b>, then save/apply the policy. Keep transfers and withdrawals set to None.`
       ].join("\n")
       : `⚠️ ${escapeHtml(message)}`;
     const replyMarkup = mainKeyboard(config.tradingMode === "read_only");
@@ -1044,7 +1050,7 @@ function requireIds(ctx: Context): { chatId: number; userId: number } {
 }
 
 function saveFlow(ctx: Context, db: AppDatabase, state: WizardState): void { const ids = requireIds(ctx); db.saveWizard(ids.chatId, ids.userId, state); }
-function clearFlow(ctx: Context, db: AppDatabase): void { const ids = requireIds(ctx); db.clearWizard(ids.chatId, ids.userId); db.invalidateConfirmations(ids.chatId, ids.userId); }
+function clearFlow(ctx: Context, db: AppDatabase): void { const ids = requireIds(ctx); db.clearWizard(ids.chatId, ids.userId); db.invalidateConfirmations(ids.chatId, ids.userId); db.invalidateControlActions(ids.chatId, ids.userId); }
 function requireFlow(ctx: Context, db: AppDatabase, flow: "order" | "trigger" | "cancel_all"): WizardState {
   const ids = requireIds(ctx); const state = db.getWizard(ids.chatId, ids.userId);
   if (!state || state.flow !== flow) throw new Error("This input panel is no longer active. Use the latest confirmation or start a new order.");

@@ -6,7 +6,7 @@ import { pathToFileURL } from "node:url";
 import { spawnSync } from "node:child_process";
 
 async function moduleAt(name: string) { return import(pathToFileURL(path.resolve("scripts", name)).href); }
-const dummy = `console.log('fixture_started'); await new Promise(resolve => process.once('SIGTERM', () => { console.log('fixture_stopped'); resolve(); }));`;
+const dummy = `console.log('fixture_started'); process.emit('pink-terminal-ready'); await new Promise(resolve => process.once('SIGTERM', () => { console.log('fixture_stopped'); resolve(); }));`;
 function fixture() {
   const root = realpathSync(mkdtempSync(path.join(tmpdir(), "Pink Terminal тест runtime ")));
   mkdirSync(path.join(root, "scripts"));
@@ -20,6 +20,27 @@ function fixture() {
 const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
 describe("local runtimes", () => {
+  it("does not report Mac startup success when the control channel opens but the app fails", async () => {
+    const root = fixture();
+    writeFileSync(path.join(root, "dist/index.js"), "await new Promise(resolve => setTimeout(resolve, 600)); throw new Error('fixture startup failure');");
+    const { MacProcess } = await moduleAt("macos-process.mjs");
+    const bot = new MacProcess(root);
+    try {
+      await expect(bot.exclusive(() => bot.start())).rejects.toThrow(/startup failed/);
+      expect((await bot.state()).running).toBe(false);
+    } finally { await bot.exclusive(() => bot.stop()); rmSync(root, { recursive: true, force: true }); }
+  }, 15000);
+  it.skipIf(process.platform !== "win32")("does not report Windows startup success before Telegram readiness", () => {
+    const root = fixture();
+    writeFileSync(path.join(root, "dist/index.js"), "await new Promise(resolve => setTimeout(resolve, 600)); throw new Error('fixture startup failure');");
+    const run = (action: string) => spawnSync(process.execPath, [path.join(root, "scripts/local-manager.mjs"), action], { cwd: root, encoding: "utf8", timeout: 15000 });
+    try {
+      const result = run("start");
+      expect(result.status).not.toBe(0);
+      expect(result.stdout).not.toContain("STARTED");
+      expect(run("status").stdout).toContain("STOPPED");
+    } finally { run("stop"); rmSync(root, { recursive: true, force: true }); }
+  }, 20000);
   it.skipIf(process.platform !== "win32")("preserves corrupt or unverified Windows state", () => {
     const root = fixture();
     const run = (action: string) => spawnSync(process.execPath, [path.join(root, "scripts/local-manager.mjs"), action], { cwd: root, encoding: "utf8", timeout: 15000 });

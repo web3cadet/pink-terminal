@@ -1,9 +1,10 @@
 import { spawn } from "node:child_process";
 import { closeSync, existsSync, openSync, readFileSync } from "node:fs";
-import { chmod, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readFile, rename, rm } from "node:fs/promises";
 import { createConnection } from "node:net";
 import { randomBytes } from "node:crypto";
 import path from "node:path";
+import { withManagementLock, runtimeEnvironment } from "./management-lock.mjs";
 
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 export function alive(pid) {
@@ -27,7 +28,7 @@ export async function control(state, command) {
       if (!text.includes("\n")) return;
       try {
         const reply = JSON.parse(text.trim());
-        done(reply.pid === state.pid && reply.status === (command === "ping" ? "pong" : "stopping"));
+        done(reply.pid === state.pid && reply.status === (command === "ping" ? "pong" : command === "ready" ? "ready" : "stopping"));
       } catch { done(false); }
     });
     socket.on("end", () => done(false));
@@ -52,7 +53,7 @@ export class MacProcess {
     }
     const pidAlive = alive(state.pid);
     const running = pidAlive && await control(state, "ping");
-    return { ...state, running, unverified: pidAlive && !running };
+    return { ...state, running, ready: running && await control(state, "ready"), unverified: pidAlive && !running };
   }
   logs() {
     return existsSync(this.logFile) ? readFileSync(this.logFile, "utf8").split(/\r?\n/).slice(-80).join("\n").trim() : "No logs yet.";
@@ -60,18 +61,14 @@ export class MacProcess {
   async exclusive(action) {
     await mkdir(this.runtime, { recursive: true, mode: 0o700 });
     await chmod(this.runtime, 0o700);
-    const lock = path.join(this.runtime, "mac-manager.lock");
-    try { await writeFile(lock, String(process.pid), { flag: "wx", mode: 0o600 }); }
-    catch (error) {
-      if (error.code !== "EEXIST") throw error;
-      throw new Error("Another management action is running. If it was interrupted, remove .runtime/mac-manager.lock after checking that no manager is active.");
-    }
-    try { return await action(); }
-    finally { await rm(lock, { force: true }); }
+    return withManagementLock(this.root, action);
   }
   async start() {
     const state = await this.state();
-    if (state.running) return state;
+    if (state.running) {
+      if (!state.ready) throw new Error("The process is running but Telegram readiness is not confirmed. Inspect Status and Logs; stop it before restarting.");
+      return state;
+    }
     if (state.unverified) throw new Error("An existing process could not be verified; refusing a duplicate launch.");
     if (!existsSync(path.join(this.root, ".env"))) throw new Error("Configuration missing. Run npm run setup:local.");
     if (!existsSync(path.join(this.root, "dist", "index.js"))) throw new Error("Build missing. Run npm run build.");
@@ -82,19 +79,19 @@ export class MacProcess {
     const token = randomBytes(32).toString("hex");
     const child = spawn(process.execPath, ["--enable-source-maps", path.join(this.root, "scripts", "macos-runner.mjs")], {
       cwd: this.root, detached: true, windowsHide: true, stdio: ["ignore", fd, fd],
-      env: { ...process.env, PINK_CONTROL_TOKEN: token },
+      env: { ...runtimeEnvironment(), PINK_CONTROL_TOKEN: token },
     });
     let spawnError;
     child.on("error", error => { spawnError = error; });
     child.unref();
     closeSync(fd);
-    for (let attempt = 0; attempt < 40; attempt++) {
-      await sleep(100);
+    for (let attempt = 0; attempt < 225; attempt++) {
+      await sleep(200);
       if (spawnError || !alive(child.pid)) throw new Error(`Bot startup failed. ${spawnError?.code ?? "See npm run bot:logs."}`);
       const current = await this.state();
-      if (current.running && current.token === token) return current;
+      if (current.ready && current.token === token) return current;
     }
-    throw new Error("Background process has not responded. Inspect Status and Logs before retrying.");
+    throw new Error("Telegram readiness was not confirmed. Runtime state was preserved; inspect Status and Logs before retrying.");
   }
   async stop() {
     const state = await this.state();

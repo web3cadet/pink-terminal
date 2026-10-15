@@ -55,16 +55,20 @@ describe("installation security", () => {
     } finally { rmSync(root, { recursive: true, force: true }); }
   }, 15000);
 
-  it.skipIf(process.platform !== "win32")("serializes concurrent starts and releases the lock for stop", async () => {
+  it.skipIf(!["win32", "darwin"].includes(process.platform))("serializes concurrent starts and releases the lock for stop", async () => {
     const root = mkdtempSync(path.join(tmpdir(), "pink-management-race-"));
-    const manager = path.join(root, "scripts/windows-manager.mjs");
+    const manager = path.join(root, "scripts", process.platform === "win32" ? "windows-manager.mjs" : "macos-manager.mjs");
     const action = (name: string) => run(`process.argv[2]=${JSON.stringify(name)}; await import(${JSON.stringify(pathToFileURL(manager).href)});`, root);
     try {
       await cp(path.resolve("scripts"), path.join(root, "scripts"), { recursive: true });
       mkdirSync(path.join(root, "dist"));
       writeFileSync(path.join(root, ".env"), "FIXTURE=1");
-      writeFileSync(path.join(root, "dist/index.js"), "await new Promise(resolve => process.once('SIGTERM', resolve));");
-      writeFileSync(manager, readFileSync(manager, "utf8").replace("await rotateLog();", "await sleep(700); await rotateLog();"));
+      writeFileSync(path.join(root, "dist/index.js"), "process.emit('pink-terminal-ready'); await new Promise(resolve => process.once('SIGTERM', resolve));");
+      if (process.platform === "win32") writeFileSync(manager, readFileSync(manager, "utf8").replace("await rotateLog();", "await sleep(700); await rotateLog();"));
+      else {
+        const engine = path.join(root, "scripts/macos-process.mjs");
+        writeFileSync(engine, readFileSync(engine, "utf8").replace("const state = await this.state();", "await sleep(700); const state = await this.state();"));
+      }
       for (let repeat = 0; repeat < 3; repeat++) {
         const results = await Promise.all([action("start"), action("start")]);
         expect(results.filter(x => x.code === 0).length, JSON.stringify(results)).toBe(1);
@@ -74,7 +78,7 @@ describe("installation security", () => {
     } finally { await action("stop"); await delay(300); rmSync(root, { recursive: true, force: true }); }
   }, 30000);
 
-  it.skipIf(process.platform !== "win32")("supports child installer/manager nesting and releases locks after exceptions or process death", async () => {
+  it("supports child installer/manager nesting and releases locks after exceptions or process death", async () => {
     const root = mkdtempSync(path.join(tmpdir(), "pink-lock-lifetime-"));
     const preamble = `import {withManagementLock} from ${JSON.stringify(moduleUrl("management-lock.mjs"))};`;
     try {

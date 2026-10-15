@@ -17,7 +17,7 @@ function link() {
 }
 async function status() {
   const state = await bot.state();
-  console.log(state.running ? `\x1b[32mRUNNING\x1b[0m · PID ${state.pid}` : state.unverified ? "UNVERIFIED · inspect the existing process" : "STOPPED");
+  console.log(state.running ? `${state.ready ? "\x1b[32mRUNNING\x1b[0m" : "STARTING · Telegram readiness not confirmed"} · PID ${state.pid}` : state.unverified ? "UNVERIFIED · inspect the existing process" : "STOPPED");
   link();
 }
 async function command(action) {
@@ -35,8 +35,9 @@ async function command(action) {
     if (action === "restart") { await bot.stop(); await bot.start(); await status(); }
     if (action === "configure") {
       await bot.stop();
-      // Installer calls the manager at the end: release the lock before that child runs.
-      return "configure";
+      // The child installer inherits ownership, retaining the lock throughout reconfiguration.
+      const child = spawnSync(process.execPath, [path.join(root, "scripts", "windows-installer.mjs"), "--local", "--reconfigure"], { cwd: root, stdio: "inherit" });
+      if (child.error || child.status !== 0) throw new Error("Configuration was not completed. The bot remains stopped.");
     }
     if (action === "uninstall") {
       await bot.stop();
@@ -47,12 +48,7 @@ async function command(action) {
   });
 }
 async function run(action) {
-  const result = await command(action);
-  if (result === "configure") {
-    const child = spawnSync(process.execPath, [path.join(root, "scripts", "windows-installer.mjs"), "--local", "--reconfigure"], { cwd: root, stdio: "inherit" });
-    if (child.error || child.status !== 0) throw new Error("Configuration was not completed. The bot remains stopped.");
-  }
-  return result;
+  return command(action);
 }
 async function main() {
   if (process.platform !== "darwin") throw new Error("This manager is for macOS. Use npm run manage to select your platform.");

@@ -17,10 +17,16 @@ if (typeof pipeName !== "string" || !pipeName.startsWith("\\\\.\\pipe\\polyester
 }
 
 let stopping = false;
+let ready = false;
+process.on("pink-terminal-ready", () => { ready = true; });
+process.on("pink-terminal-stopping", () => { ready = false; });
 const server = createServer((socket) => {
   socket.setEncoding("utf8");
+  socket.setTimeout(2000, () => socket.destroy());
+  socket.on("error", () => socket.destroy());
   socket.on("data", (data) => {
     const command = data.trim().toLowerCase();
+    if (command === "ready") { socket.end(ready && !stopping ? "ready\n" : "starting\n"); return; }
     if (command === "ping") {
       socket.end("pong\n");
       return;

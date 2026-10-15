@@ -6,6 +6,7 @@ import { ReadOnlyGateway } from "./polyester/read-only-gateway.js";
 import { AppDatabase } from "./storage/database.js";
 import { TradingService } from "./services/trading.js";
 import { createTelegramBot } from "./bot/bot.js";
+import type { EventEmitter } from "node:events";
 
 async function main(): Promise<void> {
   const config = loadConfig();
@@ -49,6 +50,7 @@ async function main(): Promise<void> {
     async function shutdown(signal: string): Promise<void> {
       if (stopping) return;
       stopping = true;
+      (process as EventEmitter).emit("pink-terminal-stopping");
       logger.info("shutdown_started", { signal });
       clearInterval(reconcileTimer);
       await bot.stop();
@@ -68,7 +70,10 @@ async function main(): Promise<void> {
 
     await bot.start({
       allowed_updates: ["message", "callback_query"],
-      onStart: () => logger.info("bot_started", { mode: config.tradingMode })
+      onStart: () => {
+        logger.info("bot_started", { mode: config.tradingMode });
+        (process as EventEmitter).emit("pink-terminal-ready");
+      }
     });
   } catch (error) {
     database.close();

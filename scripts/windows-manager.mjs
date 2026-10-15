@@ -50,7 +50,7 @@ function isRunning(pid) {
   catch { return false; }
 }
 
-function pingPipe(pipeName, timeoutMs = 650) {
+function pingPipe(pipeName, timeoutMs = 650, command = "ping") {
   if (typeof pipeName !== "string" || !pipeName.startsWith("\\\\.\\pipe\\polyester-terminal-")) return Promise.resolve(false);
   return new Promise((resolve) => {
     let settled = false;
@@ -64,8 +64,10 @@ function pingPipe(pipeName, timeoutMs = 650) {
     socket.setEncoding("utf8");
     socket.setTimeout(timeoutMs, () => finish(false));
     socket.once("error", () => finish(false));
-    socket.on("data", (data) => { if (data.includes("pong")) finish(true); });
-    socket.once("connect", () => socket.write("ping\n"));
+    let response = "";
+    socket.on("data", data => { response += data; if (response.includes("\n")) finish(response.trim() === (command === "ready" ? "ready" : "pong")); });
+    socket.once("end", () => finish(false));
+    socket.once("connect", () => socket.write(command + "\n"));
   });
 }
 
@@ -78,7 +80,7 @@ async function currentState() {
   }
   const pidAlive = isRunning(Number(state.pid));
   const owned = pidAlive && await pingPipe(state.pipeName);
-  return { ...state, running: owned, stale: Boolean(state.pid) && !owned };
+  return { ...state, running: owned, ready: owned && await pingPipe(state.pipeName, 650, "ready"), stale: Boolean(state.pid) && !owned };
 }
 
 function botLink() {
@@ -96,6 +98,7 @@ async function startBot() {
   await mkdir(RUNTIME_DIR, { recursive: true });
   const state = await currentState();
   if (state.running) {
+    if (!state.ready) fail("The process is running but Telegram readiness is not confirmed. Inspect Status and Logs; stop it before restarting.");
     print(`${color.green}${color.bold}RUNNING${color.reset} · PID ${state.pid}`);
     if (botLink()) print(`${color.cyan}${botLink()}${color.reset}`);
     return;
@@ -121,12 +124,12 @@ async function startBot() {
   closeSync(logFd);
   writeJson(STATE_FILE, { pid: child.pid, pipeName, startedAt: new Date().toISOString() });
   let ready = false;
-  for (let attempt = 0; attempt < 40; attempt++) {
+  for (let attempt = 0; attempt < 225; attempt++) {
     await sleep(200);
     if (spawnError || !isRunning(child.pid)) break;
-    if (await pingPipe(pipeName)) { ready = true; break; }
+    if (await pingPipe(pipeName, 650, "ready")) { ready = true; break; }
   }
-  if (!ready && isRunning(child.pid)) fail("Background process has not responded. Runtime state was preserved; inspect Status and Logs before retrying.");
+  if (!ready && isRunning(child.pid)) fail("Telegram readiness was not confirmed. Runtime state was preserved; inspect Status and Logs before retrying.");
   if (!ready) {
     const tail = tailLog(35);
     await rm(STATE_FILE, { force: true });
@@ -185,7 +188,7 @@ async function restartBot() {
 
 async function showStatus() {
   const state = await currentState();
-  if (state.running) print(`Status: ${color.green}${color.bold}RUNNING${color.reset} · PID ${state.pid}`);
+  if (state.running) print(`Status: ${state.ready ? `${color.green}${color.bold}RUNNING${color.reset}` : "STARTING · Telegram readiness not confirmed"} · PID ${state.pid}`);
   else print(`Status: ${color.red}${color.bold}STOPPED${color.reset}${state.stale ? ` ${color.dim}(stale state cleaned on next start)${color.reset}` : ""}`);
   if (state.startedAt) print(`Last start: ${state.startedAt}`);
   if (botLink()) print(`Telegram: ${color.cyan}${botLink()}${color.reset}`);

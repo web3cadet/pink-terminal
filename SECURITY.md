@@ -18,10 +18,11 @@ This bot signs trading requests and must be treated as a security-sensitive appl
 - `TRADING_MODE=paper` prevents exchange mutations.
 - Every order or trigger requires a short-lived, one-time Telegram confirmation.
 - Pending confirmations are bound to the API endpoint, credentials, subaccount and trading mode. Changing these invalidates pending confirmations, including legacy unbound confirmations; submitted exchange orders and strategies are not cancelled.
-- Windows installation and management operations are exclusive per installation folder. This does not coordinate separate copies using the same Telegram token.
+- Cancellation, pause and resume buttons are also bound to their Telegram owner and current API configuration, expire, and can be used only once. Old unbound buttons require a refreshed screen.
+- Windows and macOS installation and management operations share an OS-held lock per installation folder. It is released even when a manager crashes. This does not coordinate separate copies using the same Telegram token; an occupied lock endpoint fails closed rather than permitting concurrent operations.
 - The bot does not impose artificial order-size or execution caps; Polyester balances, market rules, API policy, and server preview are authoritative.
 - Client order IDs are persisted before submission. Unknown outcomes are reconciled; they are never blindly resubmitted.
-- Cancel-all and strategy writes require writable mode and retain explicit confirmation flows.
+- Cancellation requires explicit confirmation in writable mode. Strategy pause/resume remain single-click operations with the same owner, configuration, expiry and one-time checks.
 - Logs deliberately drop fields whose names look like tokens, secrets, signatures, authorization headers, or cookies.
 
 ## Production hardening
