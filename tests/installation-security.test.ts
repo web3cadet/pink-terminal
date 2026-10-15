@@ -17,6 +17,55 @@ function run(script: string, root: string, env = process.env) {
   });
 }
 describe("installation security", () => {
+  it.skipIf(process.platform !== "win32")("protects config under inherited Modify permissions without taking ownership", async () => {
+    const root = realpathSync(mkdtempSync(path.resolve(".pink-acl-regression-")));
+    const file = path.join(root, ".env");
+    const { writeSecretFile, protectSecretFile } = await import(moduleUrl("secret-file.mjs"));
+    const ps = (script: string) => {
+      const result = spawnSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-EncodedCommand", Buffer.from("$ErrorActionPreference='Stop';" + script, "utf16le").toString("base64")], {
+        windowsHide: true, encoding: "utf8", timeout: 15000, env: { ...process.env, PINK_ACL_ROOT: root, PINK_ACL_TEST: file }
+      });
+      expect(result.status, result.stderr).toBe(0);
+      return result.stdout.trim();
+    };
+    try {
+      // A drive-root installation can inherit Modify instead of FullControl.
+      // The creator can edit the DACL but must not need WRITE_OWNER.
+      ps(`
+        $sid=[System.Security.Principal.WindowsIdentity]::GetCurrent().User;
+        $acl=New-Object System.Security.AccessControl.DirectorySecurity;
+        $acl.SetAccessRuleProtection($true,$false);
+        $inherit=[System.Security.AccessControl.InheritanceFlags]'ContainerInherit,ObjectInherit';
+        $acl.AddAccessRule((New-Object System.Security.AccessControl.FileSystemAccessRule($sid,'Modify,ChangePermissions',$inherit,'None','Allow')));
+        foreach($id in @('S-1-5-18','S-1-5-32-544')) {
+          $acl.AddAccessRule((New-Object System.Security.AccessControl.FileSystemAccessRule(([System.Security.Principal.SecurityIdentifier]$id),'FullControl',$inherit,'None','Allow')));
+        }
+        [System.IO.Directory]::SetAccessControl($env:PINK_ACL_ROOT,$acl);
+      `);
+      const directoryAcl = ps("[System.IO.Directory]::GetAccessControl($env:PINK_ACL_ROOT).Sddl");
+      writeFileSync(file, "FIXTURE=initial\n");
+      const owner = ps("[System.IO.File]::GetAccessControl($env:PINK_ACL_TEST).Owner");
+      await protectSecretFile(file);
+      expect(ps("[System.IO.File]::GetAccessControl($env:PINK_ACL_TEST).Owner")).toBe(owner);
+      for (let repeat = 0; repeat < 3; repeat++) {
+        await writeSecretFile(file, `FIXTURE=${repeat}\n`);
+        expect(readFileSync(file, "utf8")).toBe(`FIXTURE=${repeat}\n`);
+        const result = JSON.parse(ps(`
+          $a=[System.IO.File]::GetAccessControl($env:PINK_ACL_TEST);
+          [pscustomobject]@{owner=$a.Owner;protected=$a.AreAccessRulesProtected;current=[System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value;rules=@($a.Access|ForEach-Object{[pscustomobject]@{sid=$_.IdentityReference.Translate([System.Security.Principal.SecurityIdentifier]).Value;rights=[int]$_.FileSystemRights;type=[string]$_.AccessControlType;inherited=$_.IsInherited}})}|ConvertTo-Json -Depth 4 -Compress
+        `));
+        expect(result.owner).toBe(owner);
+        expect(result.protected).toBe(true);
+        expect(result.rules.map((r: { sid: string }) => r.sid).sort()).toEqual([result.current, "S-1-5-18", "S-1-5-32-544"].sort());
+        expect(result.rules.every((r: { rights: number; type: string; inherited: boolean }) => r.rights === 2032127 && r.type === "Allow" && !r.inherited)).toBe(true);
+      }
+      expect(ps("[System.IO.Directory]::GetAccessControl($env:PINK_ACL_ROOT).Sddl")).toBe(directoryAcl);
+      writeFileSync(file, "FIXTURE=manually-edited\n");
+      rmSync(file);
+      expect(readdirSync(root)).toEqual([]);
+    } finally { rmSync(root, { recursive: true, force: true }); }
+  }, 60000);
+
   it("writes, replaces, edits and deletes a private config without changing directory permissions", async () => {
     const root = realpathSync(mkdtempSync(path.join(tmpdir(), "Pink secrets тест ")));
     const file = path.join(root, ".env");

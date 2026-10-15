@@ -6,12 +6,13 @@ export async function protectSecretFile(file) {
   const stat = await lstat(file);
   if (!stat.isFile() || stat.isSymbolicLink() || stat.nlink !== 1) throw new Error("Secret configuration must be an ordinary, unlinked file.");
   if (process.platform !== "win32") { await chmod(file, 0o600); return; }
-  // Use SIDs, not localized account/group names. Do not change directory permissions.
+  // Change only the DACL, preserving the owner and directory permissions.
+  // SetOwner would require WRITE_OWNER, which drive-root installs may not inherit.
+  // Use SIDs, not localized account/group names.
   const script = `
 $ErrorActionPreference = 'Stop'
 $sid = [System.Security.Principal.WindowsIdentity]::GetCurrent().User
 $acl = New-Object System.Security.AccessControl.FileSecurity
-$acl.SetOwner($sid)
 $acl.SetAccessRuleProtection($true, $false)
 foreach ($identity in @($sid, [System.Security.Principal.SecurityIdentifier]'S-1-5-18', [System.Security.Principal.SecurityIdentifier]'S-1-5-32-544')) {
   $rule = New-Object System.Security.AccessControl.FileSystemAccessRule($identity, 'FullControl', 'Allow')
