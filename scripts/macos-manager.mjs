@@ -5,6 +5,7 @@ import path from "node:path";
 import { createInterface } from "node:readline/promises";
 import { MacProcess } from "./macos-process.mjs";
 import { planUninstall, removeInstallation } from "./uninstall-files.mjs";
+import { formatLogs } from "./log-view.mjs";
 
 const root = process.cwd();
 const bot = new MacProcess(root);
@@ -22,7 +23,7 @@ async function status() {
 }
 async function command(action) {
   if (action === "status") return status();
-  if (action === "logs") return console.log(bot.logs());
+  if (action === "logs") return console.log(formatLogs(bot.logs(), { width: process.stdout.columns ?? 88 }));
   if (!["start", "stop", "restart", "configure", "uninstall"].includes(action)) throw new Error("Unknown management command.");
   if (action === "uninstall") {
     planUninstall(root);

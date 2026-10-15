@@ -94,6 +94,9 @@ export interface OrderDraft {
   kind: OrderKind;
   qty?: string;
   maxQuoteDebit?: string;
+  /** UI sizing only; the exchange receives the resolved, step-aligned qty. */
+  quoteAmount?: string;
+  sizingPrice?: string;
   price?: string;
   expireAt?: string;
   postOnly?: boolean;

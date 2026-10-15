@@ -8,7 +8,7 @@ import type { TradingService } from "../src/services/trading.js";
 import { positiveInput } from "../src/bot/presentation.js";
 
 describe("quantity input end to end through Telegram handlers", () => {
-  it("opens a reply field, accepts a decimal comma, persists quantity and renders it without writes", async () => {
+  it("defaults to quote input in the existing card and preserves optional token input and decimal commas", async () => {
     vi.useFakeTimers();
     const database = new AppDatabase(":memory:");
     const gateway = {
@@ -30,19 +30,22 @@ describe("quantity input end to end through Telegram handlers", () => {
     try {
       await bot.handleUpdate({ update_id: 0, callback_query: { id: "market", chat_instance: "1", from: { id: 1, is_bot: false, first_name: "Test" }, data: "pairtf:1:5m", message: { message_id: 99, date: 1, chat: { id: 1, type: "private" }, text: "market" } } });
       const marketCard = calls.find(c => String(c.payload.text).includes("Market overview"));
-      expect(String(marketCard?.payload.text)).toContain("<blockquote><b>Available balance</b>\nHYPE: unavailable\nUSDT: unavailable</blockquote>");
+      expect(String(marketCard?.payload.text)).toContain("<b>Available to trade</b>\nHYPE: unavailable\nUSDT: unavailable");
       expect(String(marketCard?.payload.text)).toContain("Minimum 0.01 HYPE / 5 USDT");
       await bot.handleUpdate({ update_id: 1, callback_query: { id: "c1", chat_instance: "1", from: { id: 1, is_bot: false, first_name: "Test" }, data: "ordkind:MARKET_IOC", message: { message_id: 100, date: 1, chat: { id: 1, type: "private" }, text: "panel" } } });
       expect(database.getWizard(1, 1)?.step).toBe("size");
       expect(calls.some(c => String(c.payload.text).includes("How do you want to define"))).toBe(false);
-      expect(calls.some(c => JSON.stringify(c.payload.reply_markup ?? {}).includes("ordsize:quote"))).toBe(true);
-      expect(calls.some(c => c.method === "sendMessage" && String(c.payload.text).includes("Enter the quantity"))).toBe(true);
+      expect(calls.some(c => JSON.stringify(c.payload.reply_markup ?? {}).includes("ordsize:base"))).toBe(true);
+      expect(calls.some(c => c.method === "editMessageText" && String(c.payload.text).includes("Enter the amount in USDT to buy HYPE for"))).toBe(true);
+      expect(database.getWizard(1, 1)?.data.sizingMode).toBe("quote");
+      await bot.handleUpdate({ update_id: 11, callback_query: { id: "base", chat_instance: "1", from: { id: 1, is_bot: false, first_name: "Test" }, data: "ordsize:base", message: { message_id: 100, date: 1, chat: { id: 1, type: "private" }, text: "panel" } } });
       await bot.handleUpdate({ update_id: 2, message: { message_id: 300, date: 1, chat: { id: 1, type: "private" }, from: { id: 1, is_bot: false, first_name: "Test" }, text: "1,25" } });
       expect(database.getWizard(1, 1)?.data.qty).toBe("1.25");
       expect(database.getWizard(1, 1)?.data.maxQuoteDebit).toBeUndefined();
       expect(database.getWizard(1, 1)?.step).toBe("options");
       expect(calls.some(c => c.method === "editMessageText" && String(c.payload.text).includes("1.25"))).toBe(true);
       expect(gateway.createOrder).not.toHaveBeenCalled();
+      expect(calls.filter(c => c.method === "sendMessage")).toHaveLength(0);
     } finally { vi.clearAllTimers(); vi.useRealTimers(); database.close(); }
   });
   it("rejects invalid amounts rather than interpreting them as zero or exponent notation", () => {
@@ -97,7 +100,7 @@ describe("quantity input end to end through Telegram handlers", () => {
       });
       expect(prepareOrder).toHaveBeenCalledOnce();
       expect(database.getWizard(1, 1)).toBeNull();
-      const confirmation = calls.find(c => c.method === "sendMessage" && String(c.payload.text).includes("Checked by Polyester"));
+      const confirmation = calls.find(c => c.method === "editMessageText" && String(c.payload.text).includes("Checked by Polyester"));
       expect(confirmation).toBeDefined();
       expect(String(confirmation?.payload.text)).toContain("Nothing has been sent yet");
       expect(String(confirmation?.payload.text)).toContain("Fee: Maker <b>0.1%</b> · Taker <b>0.15%</b>");
@@ -105,7 +108,10 @@ describe("quantity input end to end through Telegram handlers", () => {
       expect(String(confirmation?.payload.text)).not.toContain("ORDER BOOK");
       expect(String(confirmation?.payload.text)).not.toContain("CHART");
       const rows = (confirmation?.payload.reply_markup as { inline_keyboard: Array<Array<{ text: string; callback_data?: string }>> }).inline_keyboard;
-      expect(rows.flat().some(button => button.text === "✅ Confirm BUY · 50 USDT" && button.callback_data?.startsWith("confirm:o:"))).toBe(true);
+      expect(rows.flat().some(button => button.text === "✅ Confirm BUY · ~50 USDT" && button.callback_data?.startsWith("confirm:o:"))).toBe(true);
+      expect(confirmation?.payload.message_id).toBe(350);
+      expect(calls.filter(c => c.method === "sendMessage")).toHaveLength(0);
+      expect(String(confirmation?.payload.text)).toContain("0.6 HYPE");
       expect(createOrder).not.toHaveBeenCalled();
     } finally { vi.clearAllTimers(); vi.useRealTimers(); database.close(); }
   });

@@ -16,6 +16,22 @@ describe("order context", () => {
     const gateway = { getCatalog: async () => { throw new Error("offline"); }, listBalances: async () => [] } as unknown as ExchangeGateway;
     expect(await orderBalances(gateway, pair)).toContain("AVAX: unavailable\nUSDT: unavailable");
   });
+  it("keeps balances compact without hiding a tiny nonzero amount", async () => {
+    const gateway = {
+      getCatalog: async () => ({ assets: [{ asset: "AVAX", ledgerId: 1 }, { asset: "USDT", ledgerId: 2 }] }),
+      listBalances: async () => [{ assetId: 1, available: "1" }, { assetId: 2, available: "169814199544793805000" }]
+    } as unknown as ExchangeGateway;
+    const text = await orderBalances(gateway, pair);
+    expect(text).toContain("USDT: <b>169.814199</b>");
+    expect(text).toContain("AVAX: <b>&lt;0.000001</b>");
+    expect(text).not.toContain("blockquote");
+  });
+  it.each(["BUY", "SELL"] as const)("explains insufficient funds for %s with token units", side => {
+    const message = orderRejection({ admissible: false, rejectionCode: "ERROR_CODE_INSUFFICIENT_FUNDS", raw: {} }, pair, { side, qty: "2" } as OrderDraft);
+    expect(message).toContain("2 AVAX");
+    expect(message).toContain(side === "BUY" ? "USDT" : "available AVAX");
+    expect(message).not.toContain("ERROR_CODE");
+  });
   it("uses pair minimums without inventing a minimum budget", () => {
     expect(orderMinimums(pair, true)).toContain("5 USDT");
     expect(orderMinimums(pair, true)).toContain("includes quote fees");

@@ -11,6 +11,7 @@ import { escapeHtml, shorten } from "../utils/html.js";
 import { formatOrderDraft, formatTriggerDraft, mainKeyboard, orderKindCard, orderKindKeyboard, orderOptionsKeyboard, pairsKeyboard, sparkline } from "./ui.js";
 import { renderOverview } from "./overview.js";
 import { orderBalances, orderMinimums, orderFeeLine } from "./order-context.js";
+import { resolveQuoteAmount } from "./order-sizing.js";
 import { assetLink, heading, modeText, numberText, pairLink, pairUrl, positiveInput, terminalHeading, WEBSITE } from "./presentation.js";
 
 const PAGE_SIZE = 8;
@@ -26,6 +27,11 @@ export function createTelegramBot(deps: {
 }): Bot {
   const { config, gateway, database, trading, logger } = deps;
   const bot = new Bot(config.telegramToken);
+  const accountContext = confirmationAccountContext(config);
+  const confirmationEnabled = (ctx: Context) => {
+    const ids = requireIds(ctx);
+    return database.orderConfirmationEnabled(ids.chatId, ids.userId, accountContext);
+  };
   const controlButton = (ctx: Context, action: ControlAction): string => {
     const ids = requireIds(ctx);
     const id = randomUUID();
@@ -36,39 +42,94 @@ export function createTelegramBot(deps: {
     if (method === "sendMessage" || method === "editMessageText") Object.assign(payload, { link_preview_options: { is_disabled: true } });
     return previous(method, payload, signal);
   });
+  const renderOrderPanel = async (ctx: Context, state: WizardState, text: string, keyboard: InlineKeyboard) => {
+    const messageId = ctx.callbackQuery?.message?.message_id ?? Number(state.data.inputPromptId);
+    if (Number.isSafeInteger(messageId) && messageId > 0) {
+      try {
+        await bot.api.editMessageText(requireIds(ctx).chatId, messageId, text, { parse_mode: "HTML", reply_markup: keyboard });
+        state.data.inputPromptId = messageId;
+        return;
+      } catch (error) {
+        if (error instanceof GrammyError && error.description.includes("message is not modified")) {
+          state.data.inputPromptId = messageId;
+          return;
+        }
+        // A deleted/too-old panel can be replaced; a network failure is not proof it was deleted.
+        if (!(error instanceof GrammyError) || !/message to edit not found|message can't be edited/i.test(error.description)) throw error;
+      }
+    }
+    const response = await ctx.reply(text, { parse_mode: "HTML", reply_markup: keyboard });
+    state.data.inputPromptId = response.message_id;
+  };
   const requestInput = async (ctx: Context, state: WizardState) => {
     const pair = requirePair((await gateway.getCatalog()).pairs, Number(state.data.symbolId));
-    const label = state.step === "price" ? `Limit price · ${pair.quoteAsset}` : state.step === "expiry" ? "Expiry · minutes" : state.data.sizingMode === "quote" ? `Budget · ${pair.quoteAsset}` : `Quantity · ${pair.baseAsset}`;
-    const prompt = [
-      `<b>✎ ${escapeHtml(label)}</b>`, pairLink(pair.symbol),
-      await orderBalances(gateway, pair), "",
+    const quote = state.data.sizingMode === "quote";
+    const sell = state.data.side === "SELL";
+    const base = escapeHtml(pair.baseAsset), currency = escapeHtml(pair.quoteAsset);
+    let prompt = [
+      terminalHeading(`New order · ${state.step === "price" ? "price" : state.step === "expiry" ? "expiry" : "amount"}`),
+      `${pairLink(pair.symbol)} · ${sell ? "🔴 Sell" : "🟢 Buy"}`,
+      await orderBalances(gateway, pair),
+      state.data.inputError ? `⚠️ ${escapeHtml(String(state.data.inputError))}\n` : "",
       state.step === "expiry" ? "Enter the number of minutes until expiry."
-        : state.step === "price" ? `Enter your limit price in ${escapeHtml(pair.quoteAsset)}. Price step: ${escapeHtml(pair.tickSize)}.`
-        : `${orderMinimums(pair, state.data.sizingMode === "quote")}\n\nEnter ${state.data.sizingMode === "quote" ? "the maximum budget" : "the quantity"} as a number.`
+        : state.step === "price" ? `<b>Enter the limit price in ${currency} per ${base}.</b>\nPrice step: ${escapeHtml(pair.tickSize)}.`
+        : [
+          quote ? `<b>Enter the amount in ${currency} to ${sell ? "sell" : "buy"} ${base} for.</b>`
+            : `<b>Enter the quantity of ${base} to ${sell ? "sell" : "buy"}.</b>`,
+          quote ? `For example, 100 = ${sell ? "sell" : "buy"} about 100 ${currency} worth of ${base}, before Fee.` : `For example, 1 = 1 ${base}.`,
+          "", orderMinimums(pair), "", "Send a number in this chat."
+        ].join("\n")
     ].join("\n");
-    const canSwitch = state.step === "size" && state.data.side === "BUY" && ["MARKET_IOC", "LIMIT_IOC"].includes(String(state.data.kind));
-    const keyboard = new InlineKeyboard()
-      .text(state.data.sizingMode === "quote" ? `Enter quantity · ${pair.baseAsset}` : `Enter budget · ${pair.quoteAsset}`, state.data.sizingMode === "quote" ? "ordsize:base" : "ordsize:quote").row()
-      .text("✕ Cancel order", "cancel-flow");
-    const response = await ctx.reply(prompt, { parse_mode: "HTML", reply_markup: canSwitch ? keyboard : { force_reply: true, selective: true, input_field_placeholder: label } });
-    state.data.inputPromptId = response.message_id;
+    const keyboard = new InlineKeyboard();
+    if (state.step === "size") keyboard.text(quote ? `Enter in ${pair.baseAsset} instead` : `Enter in ${pair.quoteAsset} instead`, quote ? "ordsize:base" : "ordsize:quote").row();
+    keyboard.text("⚙ Optional settings", "ordoptions").row().text("✕ Cancel order", "cancel-flow");
+    if (!confirmationEnabled(ctx)) prompt += "\n\n⚡ <b>Final confirmation is OFF.</b> Completing the required fields submits the order immediately.";
+    await renderOrderPanel(ctx, state, prompt, keyboard);
     saveFlow(ctx, database, state);
   };
-  const liveSessions = new Map<number, { messageId: number; timer: NodeJS.Timeout; lastText: string; busy: boolean; page: number; retryUntil: number }>();
-  const prepareAndShowOrderConfirmation = async (ctx: Context, state: WizardState, fresh = false): Promise<void> => {
+  const liveSessions = new Map<number, { messageId: number; timer?: NodeJS.Timeout; lastText: string; busy: boolean; page: number; retryUntil: number; pending?: Promise<void> }>();
+  const submitOrder = async (ctx: Context, id: string, state: WizardState): Promise<void> => {
+    const ids = requireIds(ctx);
+    // Keep submission errors outside the preview error handler: a timeout may mean an order WAS sent.
+    let result: string;
+    try {
+      const receipt = await trading.confirmOrder(id, ids.chatId, ids.userId);
+      logger.info("order_submitted", { mode: config.tradingMode, status: receipt.status });
+      result = [
+        receipt.status === "paper" ? "<b>🧪 Paper order accepted</b>" : "<b>✅ Order admitted</b>",
+        formatOrderDraft(state.data as unknown as OrderDraft),
+        `Order: <code>${escapeHtml(receipt.orderId ?? "pending")}</code>`,
+        "Admission is not a fill. Check Orders for final state."
+      ].join("\n");
+    } catch (error) {
+      logger.warn("order_submission_needs_review", { error: error instanceof Error ? error.message : "unknown" });
+      result = `${terminalHeading("Check order status")}\n\n${escapeHtml(error instanceof Error ? error.message : "Submission could not be confirmed.")}\n\nCheck Orders before trying again. This order will not be retried automatically.`;
+    }
+    await renderOrderPanel(ctx, state, result, new InlineKeyboard().text("📋 Open orders", "orders:open").row().text("‹ Overview", "home"));
+  };
+  const prepareAndShowOrderConfirmation = async (ctx: Context, state: WizardState): Promise<void> => {
     const ids = requireIds(ctx);
     const draft = state.data as unknown as OrderDraft;
-    if (config.tradingMode === "read_only") {
-      await editOrReply(ctx, `${terminalHeading("Order preview")}\n\n${formatOrderDraft(draft)}\n\n<i>Read-only mode: submission is disabled.</i>`, new InlineKeyboard().text("✕ Discard order", "home"));
-      return;
-    }
-
+    if (!draft.qty && !draft.maxQuoteDebit && !draft.quoteAmount) { state.step = "size"; await requestInput(ctx, state); return; }
+    if (draft.kind !== "MARKET_IOC" && !draft.price) { state.step = "price"; await requestInput(ctx, state); return; }
+    if (draft.kind === "LIMIT_GTD" && !draft.expireAt) { state.step = "expiry"; await requestInput(ctx, state); return; }
+    let immediateId: string | undefined;
     try {
-      const prepared = await trading.prepareOrder(ids.chatId, ids.userId, draft);
-      delete state.data.inputError;
       const catalog = await gateway.getCatalog();
       const pair = requirePair(catalog.pairs, draft.symbolId);
-      const spend = draft.maxQuoteDebit ? `${draft.maxQuoteDebit} ${pair.quoteAsset}` : `${draft.qty ?? "—"} ${pair.baseAsset}`;
+      await resolveQuoteAmount(gateway, pair, draft);
+      if (config.tradingMode === "read_only") {
+        await renderOrderPanel(ctx, state, `${terminalHeading("Order preview")}\n\n${formatOrderDraft(draft)}\n\n<i>Read-only mode: submission is disabled.</i>`, new InlineKeyboard().text("✕ Discard order", "home"));
+        saveFlow(ctx, database, state);
+        return;
+      }
+      const prepared = await trading.prepareOrder(ids.chatId, ids.userId, draft);
+      delete state.data.inputError;
+      if (!confirmationEnabled(ctx)) {
+        database.clearWizard(ids.chatId, ids.userId);
+        immediateId = prepared.id;
+      } else {
+      const spend = draft.quoteAmount ? `~${draft.quoteAmount} ${pair.quoteAsset}` : draft.maxQuoteDebit ? `${draft.maxQuoteDebit} ${pair.quoteAsset}` : `${draft.qty ?? "—"} ${pair.baseAsset}`;
       const side = draft.side === "BUY" ? "BUY" : "SELL";
       const confirmationText = [
         terminalHeading("Confirm order"),
@@ -80,19 +141,16 @@ export function createTelegramBot(deps: {
         "",
         "<blockquote>✅ <b>Checked by Polyester</b>\nThe order is valid. Nothing has been sent yet.</blockquote>",
         config.tradingMode === "paper" ? "🧪 <b>PAPER MODE:</b> confirmation creates a simulated order." : "⚠️ <b>Confirm once to submit this live testnet order.</b>",
-        `Confirmation expires at <code>${new Date(prepared.expiresAt).toISOString()}</code>.`
+        `Confirmation expires at <code>${new Date(prepared.expiresAt).toISOString()}</code>.`,
+        "<i>Don't show again disables this screen for future orders. This order still needs Confirm.</i>"
       ].join("\n");
       const keyboard = new InlineKeyboard()
         .text(shorten(`✅ Confirm ${side} · ${spend}`, 58), `confirm:o:${prepared.id}`).row()
-        .text("⚙ Optional settings", `ordedit:${prepared.id}`).row()
         .text("✕ Cancel order", "home").row()
-        .url("Open pair on Polyester ↗", pairUrl(pair.symbol));
+        .text("Don't show again", `ordskip:${prepared.id}`);
 
+      await renderOrderPanel(ctx, state, confirmationText, keyboard);
       database.clearWizard(ids.chatId, ids.userId);
-      if (fresh || !ctx.callbackQuery?.message?.message_id) {
-        await ctx.reply(confirmationText, { parse_mode: "HTML", reply_markup: keyboard });
-      } else {
-        await editOrReply(ctx, confirmationText, keyboard);
       }
     } catch (error) {
       state.step = "options";
@@ -100,9 +158,9 @@ export function createTelegramBot(deps: {
       saveFlow(ctx, database, state);
       const pair = await gateway.getCatalog().then(catalog => catalog.pairs.find(item => item.symbolId === draft.symbolId)).catch(() => undefined);
       const keyboard = new InlineKeyboard().text("✎ Change amount", "order:edit:size").row();
-      if (draft.maxQuoteDebit && pair) keyboard.text(`Buy amount · ${pair.baseAsset}`, "ordsize:base").row();
+      if (draft.quoteAmount && pair) keyboard.text(`Enter in ${pair.baseAsset} instead`, "ordsize:base").row();
       keyboard.text("✕ Cancel order", "cancel-flow");
-      await ctx.reply([
+      await renderOrderPanel(ctx, state, [
         terminalHeading("Order needs attention"),
         pair ? pairLink(pair.symbol) : "",
         pair ? await orderBalances(gateway, pair) : "Balances unavailable",
@@ -110,11 +168,11 @@ export function createTelegramBot(deps: {
         `⚠️ ${escapeHtml(String(state.data.inputError))}`,
         "",
         "No order was sent. Change the amount or cancel the order."
-      ].join("\n"), {
-        parse_mode: "HTML",
-        reply_markup: keyboard
-      });
+      ].join("\n"), keyboard);
+      saveFlow(ctx, database, state);
+      return;
     }
+    if (immediateId) await submitOrder(ctx, immediateId, state);
   };
 
   const prepareAndShowTriggerConfirmation = async (ctx: Context, state: WizardState): Promise<void> => {
@@ -149,11 +207,13 @@ export function createTelegramBot(deps: {
     }
   };
 
-  const stopLiveForChat = (chatId: number): void => {
+  const stopLiveForChat = async (chatId: number): Promise<void> => {
     const session = liveSessions.get(chatId);
     if (!session) return;
     clearInterval(session.timer);
     liveSessions.delete(chatId);
+    // Drain an edit already sent to Telegram before navigating to another panel.
+    await session.pending?.catch(() => undefined);
   };
 
   const refreshLiveSession = async (chatId: number): Promise<void> => {
@@ -162,8 +222,10 @@ export function createTelegramBot(deps: {
     session.busy = true;
     try {
       const snapshot = await renderTerminalSnapshot(gateway, config, true, session.page);
+      if (liveSessions.get(chatId) !== session) return;
       if (snapshot.text !== session.lastText) {
-        await bot.api.editMessageText(chatId, session.messageId, snapshot.text, { parse_mode: "HTML", reply_markup: snapshot.keyboard });
+        session.pending = bot.api.editMessageText(chatId, session.messageId, snapshot.text, { parse_mode: "HTML", reply_markup: snapshot.keyboard }).then(() => undefined);
+        await session.pending;
         session.lastText = snapshot.text;
       }
     } catch (error) {
@@ -173,19 +235,19 @@ export function createTelegramBot(deps: {
         : 0;
       if (retryAfter > 0) {
         const current = liveSessions.get(chatId);
-        if (current) current.retryUntil = Date.now() + retryAfter * 1_000;
+        if (current === session) current.retryUntil = Date.now() + retryAfter * 1_000;
       }
       if (!notModified) {
         logger.warn("live_terminal_update_failed", { chatId, error: error instanceof Error ? error.message : "unknown" });
       }
     } finally {
       const current = liveSessions.get(chatId);
-      if (current) current.busy = false;
+      if (current === session) current.busy = false;
     }
   };
 
   const startLiveForChat = async (chatId: number, messageId: number, page: number): Promise<void> => {
-    stopLiveForChat(chatId);
+    await stopLiveForChat(chatId);
     const snapshot = await renderTerminalSnapshot(gateway, config, true, page);
     await bot.api.editMessageText(chatId, messageId, snapshot.text, { parse_mode: "HTML", reply_markup: snapshot.keyboard });
     const timer = setInterval(() => void refreshLiveSession(chatId), MARKET_REFRESH_MS);
@@ -193,6 +255,7 @@ export function createTelegramBot(deps: {
     liveSessions.set(chatId, { messageId, timer, lastText: snapshot.text, busy: false, page, retryUntil: 0 });
   };
 
+  const chatUpdates = new Map<number, Promise<void>>();
   bot.use(async (ctx, next) => {
     const chatId = ctx.chat?.id;
     const userId = ctx.from?.id;
@@ -204,11 +267,21 @@ export function createTelegramBot(deps: {
       if (ctx.message?.text === "/start") await ctx.reply("Access denied.");
       return;
     }
-    const callbackData = ctx.callbackQuery?.data;
-    if (ctx.message?.text?.startsWith("/") || callbackData === "home" || callbackData === "markets:0") clearFlow(ctx, database);
-    if (callbackData && !callbackData.startsWith("live:")) stopLiveForChat(chatId);
-    if (ctx.message) stopLiveForChat(chatId);
-    await next();
+    // Serialize updates from this chat so repeated amount messages cannot create two immediate orders.
+    const previous = chatUpdates.get(chatId);
+    let release!: () => void;
+    const current = new Promise<void>(resolve => { release = resolve; });
+    chatUpdates.set(chatId, current);
+    await previous;
+    try {
+      const callbackData = ctx.callbackQuery?.data;
+      if (ctx.message?.text?.startsWith("/") || callbackData === "home" || callbackData === "markets:0") clearFlow(ctx, database);
+      if ((callbackData && !callbackData.startsWith("live:")) || ctx.message) await stopLiveForChat(chatId);
+      await next();
+    } finally {
+      release();
+      if (chatUpdates.get(chatId) === current) chatUpdates.delete(chatId);
+    }
   });
 
   bot.command("start", async (ctx) => showHome(ctx, config, gateway, database));
@@ -229,7 +302,7 @@ export function createTelegramBot(deps: {
     await editOrReply(ctx, [
       terminalHeading("Help"),
       "",
-      "<b>Trading</b> — choose a market, enter the amount, then confirm once.",
+      "<b>Trading</b> — choose a market and enter the amount. Confirm once, unless you disabled final confirmation in Security.",
       "<b>Strategies</b> — configure the required values and confirm once; accepted strategies then run automatically on Polyester.",
       "<b>Orders</b> — inspect fill progress or cancel open orders.",
       "",
@@ -247,10 +320,35 @@ export function createTelegramBot(deps: {
         : config.tradingMode === "paper" ? "🧪 <b>PAPER</b> · transactions are simulated"
         : "🔒 <b>READ ONLY</b> · writes are blocked",
       `API connection: <b>${config.apiKeyId && config.apiSecretHex ? "connected" : "not configured"}</b>`,
+      `Final confirmation: <b>${confirmationEnabled(ctx) ? "ON" : "OFF · immediate submission"}</b>`,
       `Final confirmation remains valid for <b>${config.confirmationTtlSeconds} seconds</b>.`,
       "",
       "This interface has no withdrawal action. Effective permissions are controlled by the policy attached to your Polyester API key."
-    ].join("\n"), new InlineKeyboard().text("‹ Overview", "home"));
+    ].join("\n"), new InlineKeyboard().text("Order confirmation", "security:confirmation").row().text("‹ Overview", "home"));
+  });
+
+  const showConfirmationSettings = async (ctx: Context) => {
+    const enabled = confirmationEnabled(ctx);
+    await editOrReply(ctx, [terminalHeading("Order confirmation"), "",
+      enabled ? "🛡 <b>Final confirmation: ON</b>" : "⚡ <b>Final confirmation: OFF</b>",
+      enabled ? "Review each order and press Confirm to submit it." : "Completing the order fields submits it immediately after validation. There is no final review screen.",
+      "", "This setting applies to your regular orders, not strategies. API validation and access checks remain active.",
+      "Saved for your Telegram user and current API configuration. A different key defaults to confirmation ON."
+    ].join("\n"), new InlineKeyboard().text(enabled ? "Disable final confirmation" : "Enable final confirmation",
+      controlButton(ctx, { kind: "set_confirmation", targetId: enabled ? "off" : "on", symbolId: 0 })).row().text("‹ Security", "safety"));
+  };
+  bot.callbackQuery("security:confirmation", async ctx => { await ctx.answerCallbackQuery(); await showConfirmationSettings(ctx); });
+  bot.callbackQuery(/^ordskip:([0-9a-f-]+)$/, async ctx => {
+    const ids = requireIds(ctx);
+    const intent = database.getIntent(ctx.match[1]!);
+    if (!intent || intent.operation !== "order" || intent.chatId !== ids.chatId || intent.userId !== ids.userId
+      || intent.accountContext !== accountContext || intent.status !== "previewed" || intent.expiresAt <= Date.now()) {
+      await ctx.answerCallbackQuery({ text: "This confirmation is no longer active or belongs to another user.", show_alert: true }); return;
+    }
+    database.setOrderConfirmation(ids.chatId, ids.userId, accountContext, false);
+    await ctx.answerCallbackQuery({ text: "Disabled for future orders. Confirm this order once." });
+    await editOrReply(ctx, `${terminalHeading("Confirm this order")}\n\n${formatOrderDraft(intent.payload as unknown as OrderDraft)}\n${await orderFeeLine(gateway, Number(intent.payload.symbolId))}\n\nFinal confirmation is OFF for future orders. Enable it again in Security.\nThis order has NOT been sent. Confirm or cancel below.`,
+      new InlineKeyboard().text("✅ Confirm", `confirm:o:${intent.id}`).row().text("✕ Cancel", "home"));
   });
 
   bot.callbackQuery(/^markets:(\d+)$/, async (ctx) => {
@@ -360,9 +458,12 @@ export function createTelegramBot(deps: {
     await ctx.answerCallbackQuery();
     const state = requireFlow(ctx, database, "order");
     state.data.kind = ctx.match[1];
-    state.data.sizingMode = "base";
+    state.data.sizingMode = "quote";
     delete state.data.qty;
     delete state.data.maxQuoteDebit;
+    delete state.data.quoteAmount;
+    delete state.data.sizingPrice;
+    delete state.data.inputError;
     state.step = "size";
     saveFlow(ctx, database, state);
     await requestInput(ctx, state);
@@ -370,10 +471,12 @@ export function createTelegramBot(deps: {
   bot.callbackQuery(/^ordsize:(base|quote)$/, async (ctx) => {
     await ctx.answerCallbackQuery();
     const state = requireFlow(ctx, database, "order");
-    if (ctx.match[1] === "quote" && (state.data.side !== "BUY" || !["MARKET_IOC", "LIMIT_IOC"].includes(String(state.data.kind)))) throw new Error("Budget sizing is only available for BUY Market IOC and Limit IOC orders.");
     state.data.sizingMode = ctx.match[1]; state.step = "size";
     delete state.data.qty;
     delete state.data.maxQuoteDebit;
+    delete state.data.quoteAmount;
+    delete state.data.sizingPrice;
+    delete state.data.inputError;
     saveFlow(ctx, database, state);
     await requestInput(ctx, state);
   });
@@ -383,7 +486,6 @@ export function createTelegramBot(deps: {
     delete state.data.inputError;
     state.step = "size";
     saveFlow(ctx, database, state);
-    await editOrReply(ctx, `<b>Change order amount</b>\n${escapeHtml(String(state.data.symbol ?? ""))}`, new InlineKeyboard().text("✕ Cancel order", "cancel-flow"));
     await requestInput(ctx, state);
   });
   bot.callbackQuery(/^ticket:/, async ctx => {
@@ -414,7 +516,7 @@ export function createTelegramBot(deps: {
       || intent.expiresAt <= Date.now() || !database.transitionIntent(intent.id, ["previewed"], "superseded")) {
       throw new Error("This confirmation is no longer active. Start a new order.");
     }
-    const state: WizardState = { flow: "order", step: "options", data: { ...intent.payload } };
+    const state: WizardState = { flow: "order", step: "options", data: { ...intent.payload, inputPromptId: ctx.callbackQuery.message?.message_id } };
     saveFlow(ctx, database, state);
     await showOrderOptions(ctx, state);
   });
@@ -432,13 +534,9 @@ export function createTelegramBot(deps: {
   bot.callbackQuery(/^confirm:o:([0-9a-f-]+)$/, async (ctx) => {
     await ctx.answerCallbackQuery({ text: "Submitting…" });
     const ids = requireIds(ctx);
-    const receipt = await trading.confirmOrder(ctx.match[1]!, ids.chatId, ids.userId);
-    await editOrReply(ctx, [
-      receipt.status === "paper" ? "<b>🧪 Paper order accepted</b>" : "<b>✅ Order admitted</b>",
-      `Order: <code>${escapeHtml(receipt.orderId ?? "pending")}</code>`,
-      `Client ID: <code>${escapeHtml(receipt.clientOrderId)}</code>`,
-      "Admission is not a fill. Check Orders for final state."
-    ].join("\n"), new InlineKeyboard().text("📋 Open orders", "orders:open").row().text("‹ Overview", "home"));
+    const intent = database.getIntent(ctx.match[1]!);
+    if (!intent || intent.chatId !== ids.chatId || intent.userId !== ids.userId || intent.accountContext !== accountContext) throw new Error("This confirmation belongs to another user or configuration.");
+    await submitOrder(ctx, intent.id, { flow: "order", step: "options", data: intent.payload });
   });
 
   bot.callbackQuery(/^orders:(open|history)(?::(\d+))?$/, async (ctx) => {
@@ -537,11 +635,15 @@ export function createTelegramBot(deps: {
   });
   bot.callbackQuery(/^ctl:([a-f0-9-]{36})$/, async (ctx) => {
     const ids = requireIds(ctx);
-    if (config.tradingMode === "read_only") { await ctx.answerCallbackQuery({ text: "Read-only mode", show_alert: true }); return; }
     const action = database.consumeControlAction(ctx.match[1]!, ids.chatId, ids.userId, confirmationAccountContext(config));
     if (!action) { await ctx.answerCallbackQuery({ text: "This button has expired or belongs to another user or configuration. Refresh Orders or Strategies.", show_alert: true }); return; }
     await ctx.answerCallbackQuery();
     const { kind, targetId, symbolId } = action;
+    if (kind === "set_confirmation") {
+      database.setOrderConfirmation(ids.chatId, ids.userId, accountContext, targetId !== "off");
+      await showConfirmationSettings(ctx); return;
+    }
+    if (config.tradingMode === "read_only") return;
     if (kind === "cancel_order_prompt" || kind === "cancel_trigger_prompt") {
       const order = kind === "cancel_order_prompt";
       await ctx.reply(`Cancel ${order ? "order" : "strategy"} <code>${escapeHtml(targetId)}</code>?${order ? " It may fill before cancellation reaches the exchange." : ""}`, {
@@ -698,44 +800,37 @@ export function createTelegramBot(deps: {
       await ctx.reply("That reply belongs to an older order. Use the current amount or price prompt."); return;
     }
     if (state.flow === "order" && ["size", "price", "expiry"].includes(state.step)) {
-      const inputStep = state.step;
-      const promptId = Number(state.data.inputPromptId);
       try {
         delete state.data.inputError;
         if (state.step === "size") {
           const amount = positiveInput(text);
-          if (state.data.sizingMode === "quote") { state.data.maxQuoteDebit = amount; delete state.data.qty; }
-          else { state.data.qty = amount; delete state.data.maxQuoteDebit; }
+          delete state.data.maxQuoteDebit;
+          delete state.data.sizingPrice;
+          if (state.data.sizingMode === "quote") { state.data.quoteAmount = amount; delete state.data.qty; }
+          else { state.data.qty = amount; delete state.data.quoteAmount; }
           state.step = state.data.kind !== "MARKET_IOC" && !state.data.price ? "price" : state.data.kind === "LIMIT_GTD" && !state.data.expireAt ? "expiry" : "options";
         } else if (state.step === "price") {
           state.data.price = positiveInput(text);
-          state.step = !state.data.qty && !state.data.maxQuoteDebit ? "size" : state.data.kind === "LIMIT_GTD" && !state.data.expireAt ? "expiry" : "options";
+          state.step = !state.data.qty && !state.data.maxQuoteDebit && !state.data.quoteAmount ? "size" : state.data.kind === "LIMIT_GTD" && !state.data.expireAt ? "expiry" : "options";
         } else {
           const minutes = Number(text);
           const expiry = /^\d+$/.test(text) && Number.isInteger(minutes) && minutes >= 1 && minutes <= 43_200 ? new Date(Date.now() + minutes * 60_000) : /^\d+$/.test(text) ? new Date(NaN) : new Date(text);
           if (!Number.isFinite(expiry.getTime()) || expiry.getTime() <= Date.now()) throw new Error("Choose a future expiry: 1–43200 minutes or an ISO UTC date.");
           state.data.expireAt = expiry.toISOString();
-          state.step = !state.data.qty && !state.data.maxQuoteDebit ? "size" : !state.data.price ? "price" : "options";
+          state.step = !state.data.qty && !state.data.maxQuoteDebit && !state.data.quoteAmount ? "size" : !state.data.price ? "price" : "options";
         }
       } catch (error) { state.data.inputError = error instanceof Error ? error.message : "Invalid input"; }
       saveFlow(ctx, database, state);
-      if (!state.data.inputError && Number.isSafeInteger(promptId) && promptId > 0) {
-        const value = inputStep === "size" ? state.data.qty ?? state.data.maxQuoteDebit : inputStep === "price" ? state.data.price : state.data.expireAt;
-        const next = state.step === "options" ? "Preparing the final confirmation below…" : "Continue with the next field below.";
-        await bot.api.editMessageText(ctx.chat.id, promptId, `✓ <b>${inputStep === "size" ? "Amount" : inputStep === "price" ? "Price" : "Expiry"} saved</b> · <code>${escapeHtml(String(value))}</code>\n${next}`, { parse_mode: "HTML" }).catch(() => undefined);
-      }
       if (!state.data.inputError && state.step === "options") {
-        await prepareAndShowOrderConfirmation(ctx, state, true);
+        await prepareAndShowOrderConfirmation(ctx, state);
         return;
-      }
-      if (state.data.inputError) {
-        await ctx.reply(`⚠️ ${escapeHtml(String(state.data.inputError))}\nTry again.`, { parse_mode: "HTML" });
       }
       if (["size", "price", "expiry"].includes(state.step)) await requestInput(ctx, state);
     }
     else if (state.flow === "order") {
+      if (!state.step.startsWith("risk_")) return;
       await handleOrderText(ctx, state, text, database);
-      if (state.step === "options") await prepareAndShowOrderConfirmation(ctx, state, true);
+      if (state.step === "options") await prepareAndShowOrderConfirmation(ctx, state);
     }
     else if (state.flow === "trigger") {
       const ready = await handleTriggerText(ctx, state, text, database);

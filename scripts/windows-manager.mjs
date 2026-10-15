@@ -10,6 +10,7 @@ import { createInterface } from "node:readline/promises";
 import { randomBytes } from "node:crypto";
 import { planUninstall, removeInstallation } from "./uninstall-files.mjs";
 import { withManagementLock, runtimeEnvironment } from "./management-lock.mjs";
+import { formatLogs } from "./log-view.mjs";
 
 const APP_DIR = process.cwd();
 const RUNTIME_DIR = path.join(APP_DIR, ".runtime");
@@ -131,7 +132,7 @@ async function startBot() {
   }
   if (!ready && isRunning(child.pid)) fail("Telegram readiness was not confirmed. Runtime state was preserved; inspect Status and Logs before retrying.");
   if (!ready) {
-    const tail = tailLog(35);
+    const tail = formatLogs(tailLog(35));
     await rm(STATE_FILE, { force: true });
     fail(`The bot stopped during startup.\n\n${tail}`);
   }
@@ -202,7 +203,7 @@ function tailLog(lines = 80) {
   return values.slice(-lines).join("\n").trim() || "The log is empty.";
 }
 
-function showLogs() { print(tailLog()); }
+function showLogs() { print(formatLogs(tailLog(), { width: process.stdout.columns ?? 88 })); }
 
 async function reconfigure() {
   await stopBot({ quiet: true });

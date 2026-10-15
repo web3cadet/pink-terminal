@@ -21,11 +21,11 @@ export async function orderBalances(gateway: ExchangeGateway, pair: PairConfig):
       if (!asset) return `${escapeHtml(symbol)}: unavailable`;
       const balance = balances.find(item => item.assetId === asset.ledgerId);
       // Ledger balances always use 18 decimals, independently of order quantity scales.
-      return `${escapeHtml(symbol)}: <b>${numberText(scaledToDecimal(balance?.available ?? "0", 18), 18)}</b>`;
+      return `${escapeHtml(symbol)}: <b>${numberText(scaledToDecimal(balance?.available ?? "0", 18))}</b>`;
     });
-    return `\n<blockquote><b>Available balance</b>\n${values.join("\n")}</blockquote>\n`;
+    return `\n<b>Available to trade</b>\n${values.join("\n")}\n`;
   } catch {
-    return `\n<blockquote><b>Available balance</b>\n${escapeHtml(pair.baseAsset)}: unavailable\n${escapeHtml(pair.quoteAsset)}: unavailable</blockquote>\n`;
+    return `\n<b>Available to trade</b>\n${escapeHtml(pair.baseAsset)}: unavailable\n${escapeHtml(pair.quoteAsset)}: unavailable\n`;
   }
 }
 

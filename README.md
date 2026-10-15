@@ -90,7 +90,7 @@ Use `npm run bot:uninstall` for confirmed removal of a local installed copy, kee
 - market cards, 24-hour statistics, selectable 1m/5m/1h/4h candle sparklines, and 5/10/20-level order books
 - private Trading/Funding/available/reserved balances
 - market IOC and limit GTC/GTD/IOC/FOK order wizards
-- base-quantity sizing and quote-budget sizing where the Polyester contract supports it
+- Order entry defaults to the quote currency: for BNB/USDT, enter USDT to buy or sell BNB worth that amount, before Fee. The confirmation shows the resolved token quantity, rounded down to the pair's step. Market orders use the current ask for buys or bid for sells; limit orders use your limit price. Actual value depends on execution and fills; Fee adds to buy cost or reduces sell proceeds. Choose token input to trade an exact token quantity instead.
 - post-only GTC orders, fee-asset rules, per-order slippage tolerance, client reference price support in the API layer
 - attached take-profit, stop-loss, trailing stop, and OCO composition
 - standalone stop-loss, take-profit, trailing-stop, TWAP, and linear ladder triggers
@@ -98,6 +98,10 @@ Use `npm run bot:uninstall` for confirmed removal of a local installed copy, kee
 - confirmed single-order cancellation, dry-run + confirmation for cancel-all, trigger pause/resume/confirmed cancel
 - server `PreviewOrder` before every live order
 - one-time confirmations, expiry, exchange-aware precision/minimum validation, allowlisted Telegram chat/user IDs
+
+Regular orders ask for final confirmation by default. The final card has **Confirm**, **Cancel**, and **Don't show again**. The last button disables the review screen for future orders; it does not submit the current order. You can also change this in **Security → Order confirmation**. When disabled, completing the amount and any required price/expiry submits the order immediately after validation. Market value can change and Fee still applies. Strategies retain their confirmation step. The preference survives restart and is stored per Telegram user, chat and API configuration; a different key/subaccount/mode defaults to confirmation ON.
+
+The local manager's **Recent logs** view on Windows and macOS formats events with timestamps, readable messages and severity colors (green/info, yellow/warning, red/error). It keeps errors and stack traces visible. The original structured log in `.runtime/bot.log` remains unchanged for diagnostics. SQLite's experimental-runtime advisory is condensed into a short note; it is not a bot failure. Redirected output and `NO_COLOR` use plain text.
 - stable client IDs persisted before submission and reconciliation of ambiguous order outcomes
 - paper mode, SQLite journal, structured secret-filtering logs, Docker deployment
 
@@ -147,7 +151,7 @@ Never paste real secrets into chat. Edit `.env` locally and keep it out of Git.
 | `POLYESTER_API_SECRET_HEX` | 32-byte Ed25519 secret seed in hex |
 | `POLYESTER_SUBACCOUNT_ID` | Optional numeric subaccount scope |
 | `TRADING_MODE` | `paper` uses simulated funds; `read_only` reads the real account and blocks every mutation; `live` enables signed mutations |
-There are no artificial local notional or execution caps. In `live` mode all implemented trading, cancellation, and strategy operations are available after their confirmation step; Polyester account policy, balances, market metadata, and server preview remain authoritative.
+There are no artificial local notional or execution caps. In `live` mode implemented operations use their confirmation step, except regular orders when you explicitly disable final confirmation in Security. Polyester account policy, balances, market metadata, and server preview remain authoritative.
 
 See [SECURITY.md](SECURITY.md) before enabling live writes.
 

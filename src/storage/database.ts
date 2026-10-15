@@ -27,7 +27,7 @@ export interface IntentRecord {
 }
 
 export interface ControlAction {
-  kind: "cancel_order_prompt" | "cancel_order" | "cancel_trigger_prompt" | "cancel_trigger" | "pause_trigger" | "resume_trigger" | "cancel_all";
+  kind: "cancel_order_prompt" | "cancel_order" | "cancel_trigger_prompt" | "cancel_trigger" | "pause_trigger" | "resume_trigger" | "cancel_all" | "set_confirmation";
   targetId: string;
   symbolId: number;
 }
@@ -44,6 +44,14 @@ export class AppDatabase {
   }
 
   close(): void { this.db.close(); }
+
+  orderConfirmationEnabled(chatId: number, userId: number, context: string): boolean {
+    return this.readStatus(`order_confirmation:${chatId}:${userId}:${context}`) !== "off";
+  }
+
+  setOrderConfirmation(chatId: number, userId: number, context: string, enabled: boolean): void {
+    this.rememberStatus(`order_confirmation:${chatId}:${userId}:${context}`, enabled ? "on" : "off");
+  }
 
   createControlAction(id: string, chatId: number, userId: number, context: string, action: ControlAction, expiresAt: number): void {
     this.db.prepare("DELETE FROM control_actions WHERE expires_at <= ?").run(Date.now());
