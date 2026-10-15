@@ -38,7 +38,7 @@ export async function renderOverview(gateway: ExchangeGateway, config: AppConfig
     terminalHeading(), "", "for Polyester testnet", "🟢 Status: online",
     ...(config.tradingMode === "live" ? [] : [modeText(config.tradingMode)]), "",
     "<b>◈ PORTFOLIO</b>",
-    balances.status === "fulfilled" ? `Estimated value: <b>≈ ${numberText(estimated.toFixed(2), 2)} USDT</b>` : "Estimated value: <b>Unavailable</b>",
+    balances.status === "fulfilled" && markets.status === "fulfilled" ? `Estimated value: <b>≈ ${numberText(estimated.toFixed(2), 2)} USDT</b>` : "Estimated value: <b>Unavailable</b>",
     `Volume: <b>${numberText(Number(localVolume).toFixed(2), 2)} USDT</b> <i>(filled via bot)</i>`,
     `Open orders: <b>${orders.status === "fulfilled" ? orders.value.length : "—"}</b>`,
     "",

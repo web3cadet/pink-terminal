@@ -19,7 +19,7 @@ import type { Logger } from "../log.js";
 import { decodeBase58Uint64, encodeBase58Uint64 } from "../utils/base58.js";
 import { decimalToScaled, scaledToDecimal } from "../utils/decimal.js";
 import type { AppConfig } from "../config.js";
-import { asArray, asNumber, asRecord, asString, ConnectJsonTransport } from "./transport.js";
+import { asArray, asNumber, asRecord, asString, ConnectJsonTransport, PolyesterApiError } from "./transport.js";
 
 const PATHS = {
   spotConfig: "/marketdata.v1.MarketDataService/GetSpotConfig",
@@ -226,19 +226,19 @@ export class PolyesterGateway implements ExchangeGateway {
 
   async getOrderByClientId(clientOrderId: string): Promise<OrderSummary | null> {
     await this.getCatalog();
-    const raw = await this.transport.call<Record<string, unknown>>(PATHS.getOrder, this.scope({
+    const raw = await this.readOrder({
       clientOrderId, includeAttachedRisk: true, includeAttachedRiskState: true, includeExecutionHistory: true, limit: 100, pageToken: ""
-    }), { authenticated: true, retryRead: true });
+    });
     const row = asRecord(raw.order);
     return Object.keys(row).length ? this.parseOrder(row) : null;
   }
 
   async getOrderDetails(orderId: string, pageToken = ""): Promise<OrderDetails | null> {
     await this.getCatalog();
-    const raw = await this.transport.call<Record<string, unknown>>(PATHS.getOrder, this.scope({
+    const raw = await this.readOrder({
       orderId: decodeBase58Uint64(orderId), includeAttachedRisk: true, includeAttachedRiskState: true,
       includeExecutionHistory: true, limit: 100, pageToken
-    }), { authenticated: true, retryRead: true });
+    });
     const row = asRecord(raw.order);
     if (Object.keys(row).length === 0) return null;
     const pair = requirePair(await this.getCatalog(), asNumber(row.symbolId));
@@ -257,6 +257,16 @@ export class PolyesterGateway implements ExchangeGateway {
 
   cancelOrder(clientOrderId: string, symbolId: number): Promise<Record<string, unknown>> {
     return this.transport.call(PATHS.cancelOrder, this.scope({ clientOrderId, symbolId }), { authenticated: true });
+  }
+
+  private async readOrder(body: Record<string, unknown>): Promise<Record<string, unknown>> {
+    try {
+      return await this.transport.call(PATHS.getOrder, this.scope(body), { authenticated: true, retryRead: true });
+    } catch (error) {
+      // Admission can precede read-model indexing. Absence is not rejection and must never cause a resubmit.
+      if (error instanceof PolyesterApiError && error.status === 404 && error.code === "not_found") return {};
+      throw error;
+    }
   }
 
   cancelAll(symbolIds: number[], dryRun: boolean, requestId: string): Promise<Record<string, unknown>> {

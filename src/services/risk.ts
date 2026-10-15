@@ -1,6 +1,6 @@
 import type { AppConfig } from "../config.js";
 import type { MarketOverview, OrderDraft, PairConfig, TriggerDraft } from "../domain.js";
-import { compareDecimals, isStepAligned, multiplyDecimals } from "../utils/decimal.js";
+import { compareDecimals, decimalToScaled, isStepAligned, multiplyDecimals, scaledToDecimal } from "../utils/decimal.js";
 
 export class RiskGuard {
   constructor(private readonly config: AppConfig) {}
@@ -37,6 +37,11 @@ export class RiskGuard {
     if (compareDecimals(draft.qty, pair.minQtyBase) < 0 || !isStepAligned(draft.qty, pair.stepSize)) {
       throw new Error(`Quantity must be at least ${pair.minQtyBase} and align to ${pair.stepSize}`);
     }
+    for (const [label, value] of [["Trigger price", draft.triggerPrice], ["Limit price", draft.childLimitPrice], ["Activation price", draft.activationPrice], ["Ladder minimum price", draft.priceMin], ["Ladder maximum price", draft.priceMax]] as const) {
+      if (value !== undefined && (compareDecimals(value, "0") <= 0 || !isStepAligned(value, pair.tickSize))) {
+        throw new Error(`${label} must be positive and align to price step ${pair.tickSize}`);
+      }
+    }
     if ((draft.kind === "STOP_LOSS" || draft.kind === "TAKE_PROFIT") && !draft.triggerPrice) throw new Error("Trigger price is required");
     if ((draft.kind === "STOP_LOSS" || draft.kind === "TAKE_PROFIT") && draft.side === "BUY" && draft.childKind === "MARKET_IOC") {
       throw new Error("BUY market children are not supported for conditional spot triggers; choose LIMIT_GTC");
@@ -56,7 +61,17 @@ export class RiskGuard {
     }
     if (draft.kind === "LADDER") {
       if (!draft.priceMin || !draft.priceMax || compareDecimals(draft.priceMin, draft.priceMax) >= 0) throw new Error("Ladder minimum price must be below maximum price");
-      if ((draft.levels ?? 0) < 2 || (draft.levels ?? 0) > 100) throw new Error("Ladder levels must be between 2 and 100");
+      if (!Number.isInteger(draft.levels) || (draft.levels ?? 0) < 2 || (draft.levels ?? 0) > 100) throw new Error("Ladder levels must be between 2 and 100");
+      // Equal splitting can produce invalid children even when the parent is step-aligned.
+      const totalStep = multiplyDecimals(pair.stepSize, String(draft.levels));
+      if (!isStepAligned(draft.qty, totalStep)) {
+        throw new Error(`For ${draft.levels} ladder levels, total quantity must be a multiple of ${totalStep} ${pair.baseAsset}, so each child aligns to step ${pair.stepSize}. Change the amount or number of levels.`);
+      }
+      const scale = Math.max(draft.qty.split(".")[1]?.length ?? 0, pair.stepSize.split(".")[1]?.length ?? 0);
+      const childQty = scaledToDecimal(BigInt(decimalToScaled(draft.qty, scale)) / BigInt(draft.levels!), scale);
+      if (compareDecimals(childQty, pair.minQtyBase) < 0 || compareDecimals(multiplyDecimals(childQty, draft.priceMin), pair.minNotionalQuote) < 0) {
+        throw new Error(`Each ladder level must meet the minimum ${pair.minQtyBase} ${pair.baseAsset} / ${pair.minNotionalQuote} ${pair.quoteAsset}. Increase total quantity or reduce the number of levels.`);
+      }
     }
   }
 }

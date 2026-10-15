@@ -208,7 +208,7 @@ export function createTelegramBot(deps: {
         "",
         `⚠️ ${escapeHtml(String(state.data.inputError))}`,
         "No strategy was created."
-      ].join("\n"), new InlineKeyboard().text("↻ Check again", "trpreview").row().text("✕ Discard strategy", "cancel-flow"));
+      ].join("\n"), new InlineKeyboard().text("✎ Edit strategy", "tredit").row().text("↻ Check again", "trpreview").row().text("✕ Discard strategy", "cancel-flow"));
     }
   };
 
@@ -590,7 +590,11 @@ export function createTelegramBot(deps: {
   bot.callbackQuery(/^od:(.+)$/, async (ctx) => {
     await ctx.answerCallbackQuery({ text: "Loading order details…" });
     const [catalog, details] = await Promise.all([gateway.getCatalog(), gateway.getOrderDetails(ctx.match[1]!)]);
-    if (!details) throw new Error("Order was not found");
+    if (!details) {
+      await editOrReply(ctx, `${terminalHeading("Order details")}\n\nOrder details are not available yet. A recently submitted order may still be syncing. Refresh before submitting another order.`,
+        new InlineKeyboard().text("↻ Refresh order", `od:${ctx.match[1]!}`).row().text("‹ Order history", "orders:history"));
+      return;
+    }
     const order = details.order;
     const pair = catalog.pairs.find((item) => item.symbolId === order.symbolId);
     const total = order.totalQty ?? order.qty;
@@ -727,6 +731,7 @@ export function createTelegramBot(deps: {
     keyboard.text("↻ Refresh", `td:${trigger.triggerId}`).row().text("‹ Strategies", "triggers:list");
     await editOrReply(ctx, [terminalHeading("Strategy status"),
       `Type: ${escapeHtml(trigger.type)}`, `Status: <b>${escapeHtml(trigger.status.replace(/^STATUS_/, ""))}</b>`,
+      ...(trigger.raw.failureReason || trigger.raw.cancelReason ? [`Reason: ${escapeHtml(String(trigger.raw.failureReason ?? trigger.raw.cancelReason).replace(/^TRIGGER_(?:FAILURE|CANCEL)_REASON_/, "").replaceAll("_", " "))}`] : []),
       `Child orders: ${children.length}`, `Filled: ${children.filter(o => o.status.includes("FILLED") && !o.status.includes("PARTIAL")).length}`,
       `Open: ${children.filter(o => isOrderOpen(o.status)).length}`, `Rejected: ${children.filter(o => o.status.includes("REJECT")).length}`,
       ...children.slice(0, 6).map(o => `• ${escapeHtml(o.orderId)}: ${escapeHtml(orderStatusLabel(o.status, o.raw.terminalReason))}`),
@@ -787,6 +792,15 @@ export function createTelegramBot(deps: {
   bot.callbackQuery("trpreview", async (ctx) => {
     await ctx.answerCallbackQuery({ text: "Checking strategy…" });
     await prepareAndShowTriggerConfirmation(ctx, requireFlow(ctx, database, "trigger"));
+  });
+  bot.callbackQuery("tredit", async (ctx) => {
+    await ctx.answerCallbackQuery();
+    const state = requireFlow(ctx, database, "trigger");
+    const ids = requireIds(ctx);
+    database.invalidateConfirmations(ids.chatId, ids.userId, "trigger");
+    state.step = "tr_qty";
+    saveFlow(ctx, database, state);
+    await editOrReply(ctx, "<b>Edit strategy</b>\nEnter the total asset amount. You will then review the strategy settings again.", new InlineKeyboard().text("✕ Discard strategy", "cancel-flow"));
   });
   bot.callbackQuery(/^confirm:t:([0-9a-f-]+)$/, async (ctx) => {
     await ctx.answerCallbackQuery({ text: "Activating strategy…" });

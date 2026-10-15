@@ -61,13 +61,14 @@ describe("offline signed trading pipeline audit", () => {
         const { db, service, writes } = fixture();
         try {
           const draft: TriggerDraft = { symbolId: 1, symbol: pair.symbol, side, kind, qty: "1", childKind: kind === "TRAILING_STOP" ? "MARKET_IOC" : "LIMIT_GTC", childLimitPrice: "10", triggerPrice: "9", trailingBps: 200, durationMs: 60000, sliceIntervalMs: 10000, priceMin: "9", priceMax: "11", levels: 3 };
+          if (kind === "LADDER") draft.qty = "3";
           const prepared = await service.prepareTrigger(1, 1, draft);
           expect(writes).toHaveLength(0);
           await service.confirmTrigger(prepared.id, 1, 1);
           await expect(service.confirmTrigger(prepared.id, 1, 1)).rejects.toThrow(/no longer valid/);
           expect(writes).toHaveLength(1);
           expect(writes[0]?.body.subaccountId).toBe("7");
-          expect(writes[0]?.body.trigger.qtyScaled).toBe("100");
+          expect(writes[0]?.body.trigger.qtyScaled).toBe(kind === "LADDER" ? "300" : "100");
           const wireKind = { STOP_LOSS: "stopLoss", TAKE_PROFIT: "takeProfit", TRAILING_STOP: "trailingStop", TWAP: "twap", LADDER: "ladder" }[kind];
           expect(writes[0]?.body.trigger[wireKind].side).toBe(side);
           expect(db.getIntent(prepared.id)?.status).toBe("accepted");

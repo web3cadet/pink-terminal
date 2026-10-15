@@ -4,6 +4,17 @@ import type { ExchangeGateway } from "../src/domain.js";
 import type { AppConfig } from "../src/config.js";
 import { AppDatabase } from "../src/storage/database.js";
 
+it("does not present a USDT-only subtotal as portfolio value when prices fail", async () => {
+  const gateway = {
+    getCatalog: async () => ({ assets: [{ ledgerId: 1, asset: "USDT" }, { ledgerId: 2, asset: "ETC" }], pairs: [] }),
+    listBalances: async () => [1, 2].map(assetId => ({ assetId, trading: "1000000000000000000", funding: "0", reserved: "0", available: "1000000000000000000" })),
+    listMarketOverview: async () => { throw new Error("offline"); }, listOpenOrders: async () => []
+  } as unknown as ExchangeGateway;
+  const text = await renderOverview(gateway, { tradingMode: "live" } as AppConfig);
+  expect(text).toContain("Estimated value: <b>Unavailable</b>");
+  expect(text).toContain("ETC");
+});
+
 it("values trading plus funding without double-counting reserved funds and never invents PnL or volume", async () => {
   const gateway = {
     getCatalog: async () => ({

@@ -19,6 +19,15 @@ const pair: PairConfig = {
 describe("local risk guard", () => {
   const guard = new RiskGuard(config);
 
+  it("rejects a ladder whose equal children violate the quantity step", () => {
+    const p = { ...pair, baseAsset: "ETC", stepSize: "0.000001", minQtyBase: "0.1" };
+    const draft = { symbolId: 1, symbol: "ETC-USDT", kind: "LADDER", side: "BUY", qty: "1.627237", childKind: "LIMIT_GTC", priceMin: "8", priceMax: "9", levels: 2 } as const;
+    expect(() => guard.validateTrigger(draft, p)).toThrow(/multiple of 0.000002/);
+    expect(() => guard.validateTrigger({ ...draft, qty: "1.627236" }, p)).not.toThrow();
+    expect(() => guard.validateTrigger({ ...draft, qty: "1" }, p)).toThrow(/Each ladder level/);
+    expect(() => guard.validateTrigger({ ...draft, qty: "2", priceMin: "8.001" }, p)).toThrow(/price step/);
+  });
+
   it("accepts a bounded limit order", () => {
     expect(() => guard.validateOrder({ symbolId: 1, symbol: "BTC-USDT", side: "BUY", kind: "LIMIT_GTC", qty: "0.0001", price: "80000" }, pair, undefined)).not.toThrow();
   });
