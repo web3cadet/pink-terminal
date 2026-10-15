@@ -80,6 +80,20 @@ export class PolyesterGateway implements ExchangeGateway {
     return value;
   }
 
+  async getSpotFeeRates(symbolId: number): Promise<{ maker: string; taker: string }> {
+    const raw = await this.transport.call<Record<string, unknown>>(
+      "/fees.v1.FeeService/GetSpotFeeRates",
+      this.scope({ symbolId: [symbolId] }),
+      { authenticated: true, timeoutMs: 4_000 }
+    );
+    const row = asArray(raw.feeRates).map(asRecord).find(item => item.symbolId === symbolId);
+    const maker = asString(row?.makerFeeRatePercent);
+    const taker = asString(row?.takerFeeRatePercent);
+    const valid = (value: string, minimum: number) => /^-?\d+(?:\.\d+)?$/.test(value) && Number(value) >= minimum && Number(value) <= 100;
+    if (!valid(maker, -100) || !valid(taker, 0)) throw new Error("Fee rates unavailable");
+    return { maker, taker };
+  }
+
   async listMarketOverview(): Promise<MarketOverview[]> {
     const [catalog, raw] = await Promise.all([
       this.getCatalog(),

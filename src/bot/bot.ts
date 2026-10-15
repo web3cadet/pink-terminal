@@ -9,6 +9,7 @@ import { decimalToScaled, scaledToDecimal } from "../utils/decimal.js";
 import { escapeHtml, shorten } from "../utils/html.js";
 import { formatOrderDraft, formatTriggerDraft, mainKeyboard, orderKindCard, orderKindKeyboard, orderOptionsKeyboard, pairsKeyboard, sparkline } from "./ui.js";
 import { renderOverview } from "./overview.js";
+import { orderBalances, orderMinimums, orderFeeLine } from "./order-context.js";
 import { assetLink, heading, modeText, numberText, pairLink, pairUrl, positiveInput, terminalHeading, WEBSITE } from "./presentation.js";
 
 const PAGE_SIZE = 8;
@@ -31,7 +32,14 @@ export function createTelegramBot(deps: {
   const requestInput = async (ctx: Context, state: WizardState) => {
     const pair = requirePair((await gateway.getCatalog()).pairs, Number(state.data.symbolId));
     const label = state.step === "price" ? `Limit price · ${pair.quoteAsset}` : state.step === "expiry" ? "Expiry · minutes" : state.data.sizingMode === "quote" ? `Budget · ${pair.quoteAsset}` : `Quantity · ${pair.baseAsset}`;
-    const response = await ctx.reply(`<b>✎ ${escapeHtml(label)}</b>\nReply with a number, e.g. <code>1</code> or <code>0.25</code>.`, { parse_mode: "HTML", reply_markup: { force_reply: true, selective: true, input_field_placeholder: label } });
+    const prompt = [
+      `<b>✎ ${escapeHtml(label)}</b>`, pairLink(pair.symbol),
+      await orderBalances(gateway, pair), "",
+      state.step === "expiry" ? "Enter the number of minutes until expiry."
+        : state.step === "price" ? `Enter your limit price in ${escapeHtml(pair.quoteAsset)}. Price step: ${escapeHtml(pair.tickSize)}.`
+        : `${orderMinimums(pair, state.data.sizingMode === "quote")}\n\nEnter ${state.data.sizingMode === "quote" ? "the maximum budget" : "the quantity"} as a number.`
+    ].join("\n");
+    const response = await ctx.reply(prompt, { parse_mode: "HTML", reply_markup: { force_reply: true, selective: true, input_field_placeholder: label } });
     state.data.inputPromptId = response.message_id;
     saveFlow(ctx, database, state);
   };
@@ -54,8 +62,10 @@ export function createTelegramBot(deps: {
       const confirmationText = [
         terminalHeading("Confirm order"),
         pairLink(pair.symbol),
+        await orderBalances(gateway, pair),
         "",
         formatOrderDraft(draft),
+        await orderFeeLine(gateway, draft.symbolId),
         "",
         "<blockquote>✅ <b>Checked by Polyester</b>\nThe order is valid. Nothing has been sent yet.</blockquote>",
         config.tradingMode === "paper" ? "🧪 <b>PAPER MODE:</b> confirmation creates a simulated order." : "⚠️ <b>Confirm once to submit this live testnet order.</b>",
@@ -77,15 +87,21 @@ export function createTelegramBot(deps: {
       state.step = "options";
       state.data.inputError = error instanceof Error ? error.message : "Order preview failed";
       saveFlow(ctx, database, state);
+      const pair = await gateway.getCatalog().then(catalog => catalog.pairs.find(item => item.symbolId === draft.symbolId)).catch(() => undefined);
+      const keyboard = new InlineKeyboard().text("✎ Change amount", "order:edit:size").row();
+      if (draft.maxQuoteDebit && pair) keyboard.text(`Buy amount · ${pair.baseAsset}`, "ordsize:base").row();
+      keyboard.text("✕ Cancel order", "cancel-flow");
       await ctx.reply([
         terminalHeading("Order needs attention"),
+        pair ? pairLink(pair.symbol) : "",
+        pair ? await orderBalances(gateway, pair) : "Balances unavailable",
         "",
         `⚠️ ${escapeHtml(String(state.data.inputError))}`,
         "",
         "No order was sent. Change the amount or cancel the order."
       ].join("\n"), {
         parse_mode: "HTML",
-        reply_markup: new InlineKeyboard().text("✎ Change amount", "order:edit:size").row().text("✕ Cancel order", "cancel-flow")
+        reply_markup: keyboard
       });
     }
   };
@@ -314,19 +330,20 @@ export function createTelegramBot(deps: {
     await ctx.answerCallbackQuery();
     const pair = requirePair((await gateway.getCatalog()).pairs, Number(ctx.match[1]));
     saveFlow(ctx, database, { flow: "order", step: "side", data: { symbolId: pair.symbolId, symbol: pair.symbol } });
-    await editOrReply(ctx, `${heading("New order · direction")}\n${pairLink(pair.symbol)}\n\n<b>What do you want to do?</b>`, new InlineKeyboard().text(`🟢 Buy · ${pair.baseAsset}`, "ordside:BUY").text(`🔴 Sell · ${pair.baseAsset}`, "ordside:SELL").row().text("✕ Cancel order", "cancel-flow"));
+    await editOrReply(ctx, `${heading("New order · direction")}\n${pairLink(pair.symbol)}\n\n${await orderBalances(gateway, pair)}\n\n<b>What do you want to do?</b>`, new InlineKeyboard().text(`🟢 Buy · ${pair.baseAsset}`, "ordside:BUY").text(`🔴 Sell · ${pair.baseAsset}`, "ordside:SELL").row().text("✕ Cancel order", "cancel-flow"));
   });
   bot.callbackQuery(/^orderpairside:(\d+):(BUY|SELL)$/, async (ctx) => {
     await ctx.answerCallbackQuery();
     const pair = requirePair((await gateway.getCatalog()).pairs, Number(ctx.match[1]));
     saveFlow(ctx, database, { flow: "order", step: "kind", data: { symbolId: pair.symbolId, symbol: pair.symbol, side: ctx.match[2] } });
-    await showOrderKinds(ctx, pair.symbol, ctx.match[2] as OrderSide);
+    await showOrderKinds(ctx, pair.symbol, ctx.match[2] as OrderSide, await orderBalances(gateway, pair));
   });
   bot.callbackQuery(/^ordside:(BUY|SELL)$/, async (ctx) => {
     await ctx.answerCallbackQuery();
     const state = requireFlow(ctx, database, "order");
     state.data.side = ctx.match[1]; state.step = "kind"; saveFlow(ctx, database, state);
-    await showOrderKinds(ctx, String(state.data.symbol), ctx.match[1] as OrderSide);
+    const pair = requirePair((await gateway.getCatalog()).pairs, Number(state.data.symbolId));
+    await showOrderKinds(ctx, String(state.data.symbol), ctx.match[1] as OrderSide, await orderBalances(gateway, pair));
   });
   bot.callbackQuery(/^ordkind:(MARKET_IOC|LIMIT_GTC|LIMIT_GTD|LIMIT_IOC|LIMIT_FOK)$/, async (ctx) => {
     await ctx.answerCallbackQuery();
@@ -336,7 +353,7 @@ export function createTelegramBot(deps: {
     const canQuote = state.data.side === "BUY" && (ctx.match[1] === "MARKET_IOC" || ctx.match[1] === "LIMIT_IOC");
     if (canQuote) {
       state.step = "sizing"; saveFlow(ctx, database, state);
-      await editOrReply(ctx, `${heading("New order · amount")}\n${pairLink(pair.symbol)} · 🟢 Buy\n\n<b>How do you want to define the purchase?</b>\n\n<b>Buy amount</b> — set how much ${escapeHtml(pair.baseAsset)} to receive.\n<b>Spend up to</b> — set the maximum ${escapeHtml(pair.quoteAsset)} to spend.`, new InlineKeyboard()
+      await editOrReply(ctx, `${heading("New order · amount")}\n${pairLink(pair.symbol)} · 🟢 Buy\n\n${await orderBalances(gateway, pair)}\n\n<b>How do you want to define the purchase?</b>\n\n<b>Buy amount</b> — set how much ${escapeHtml(pair.baseAsset)} to receive.\n<b>Spend up to</b> — set the maximum ${escapeHtml(pair.quoteAsset)} to spend.\n\n${orderMinimums(pair, true)}`, new InlineKeyboard()
         .text(`Buy amount · ${pair.baseAsset}`, "ordsize:base").row()
         .text(`Spend up to · ${pair.quoteAsset}`, "ordsize:quote").row()
         .text("✕ Cancel order", "cancel-flow"));
@@ -348,7 +365,10 @@ export function createTelegramBot(deps: {
   bot.callbackQuery(/^ordsize:(base|quote)$/, async (ctx) => {
     await ctx.answerCallbackQuery();
     const state = requireFlow(ctx, database, "order");
-    state.data.sizingMode = ctx.match[1]; state.step = "size"; saveFlow(ctx, database, state);
+    state.data.sizingMode = ctx.match[1]; state.step = "size";
+    delete state.data.qty;
+    delete state.data.maxQuoteDebit;
+    saveFlow(ctx, database, state);
     await requestInput(ctx, state);
   });
   bot.callbackQuery("order:edit:size", async (ctx) => {
@@ -1004,8 +1024,8 @@ async function showHome(ctx: Context, config: AppConfig, gateway: ExchangeGatewa
   }
 }
 
-async function showOrderKinds(ctx: Context, symbol: string, side?: OrderSide): Promise<void> {
-  await editOrReply(ctx, orderKindCard(symbol, side), orderKindKeyboard());
+async function showOrderKinds(ctx: Context, symbol: string, side?: OrderSide, balances = ""): Promise<void> {
+  await editOrReply(ctx, orderKindCard(symbol, side, balances), orderKindKeyboard());
 }
 
 async function showOrderOptions(ctx: Context, state: WizardState): Promise<void> {

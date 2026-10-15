@@ -125,6 +125,7 @@ async function startBot() {
 async function stopBot({ quiet = false } = {}) {
   const state = await currentState();
   if (!state.running) {
+    if (isRunning(Number(state.pid))) fail("A process still exists but its control channel could not be verified. No process was killed; runtime state was preserved.");
     await rm(STATE_FILE, { force: true });
     if (!quiet) print(`${color.yellow}Already stopped.${color.reset}`);
     return;
@@ -173,6 +174,7 @@ async function showStatus() {
   if (state.startedAt) print(`Last start: ${state.startedAt}`);
   if (botLink()) print(`Telegram: ${color.cyan}${botLink()}${color.reset}`);
   print(`Log: ${LOG_FILE}`);
+  print("If local management files were deleted: npx --yes github:web3cadet/pink-terminal --stop");
 }
 
 function tailLog(lines = 80) {

@@ -55,13 +55,14 @@ describe("quantity input end to end through Telegram handlers", () => {
           status: "PAIR_STATUS_ENABLED", defaultMarketSlippageBpsBuy: 100,
           defaultMarketSlippageBpsSell: 100, maxClientRefDriftBps: 100
         }],
-        assets: [], tsSec: "1"
+        assets: [{ asset: "HYPE", ledgerId: 1 }, { asset: "USDT", ledgerId: 2 }], tsSec: "1"
       }),
       listMarketOverview: async () => [{ symbolId: 1, lastPrice: "82", bestBid: "81.9", bestAsk: "82.1", change24hBps: 100 }],
       getOrderbook: async () => ({ symbolId: 1, bookSeq: "1", bids: [], asks: [], ts: "1" }),
-      getCandles: async () => [], listBalances: async () => [], listOpenOrders: async () => [], createOrder
+      getCandles: async () => [], listBalances: async () => [{ assetId: 1, available: "1250000000000000000" }, { assetId: 2, available: "100000000000000000000" }], listOpenOrders: async () => [], createOrder
     } as unknown as ExchangeGateway;
     const prepareOrder = vi.fn(async () => ({ id: "11111111-1111-4111-8111-111111111111", clientId: "tg-test", expiresAt: Date.now() + 90_000, preview: { admissible: true, raw: {} } }));
+    gateway.getSpotFeeRates = async () => ({ maker: "0.1", taker: "0.15" });
     const config = {
       telegramToken: "123:test", allowedChatIds: new Set([1]), allowedUserIds: new Set([1]),
       tradingMode: "live", pollIntervalMs: 15000
@@ -92,6 +93,8 @@ describe("quantity input end to end through Telegram handlers", () => {
       const confirmation = calls.find(c => c.method === "sendMessage" && String(c.payload.text).includes("Checked by Polyester"));
       expect(confirmation).toBeDefined();
       expect(String(confirmation?.payload.text)).toContain("Nothing has been sent yet");
+      expect(String(confirmation?.payload.text)).toContain("Fee: Maker <b>0.1%</b> · Taker <b>0.15%</b>");
+      expect(String(confirmation?.payload.text)).toContain("HYPE: <b>1.25</b> · USDT: <b>100</b>");
       expect(String(confirmation?.payload.text)).not.toContain("ORDER BOOK");
       expect(String(confirmation?.payload.text)).not.toContain("CHART");
       const rows = (confirmation?.payload.reply_markup as { inline_keyboard: Array<Array<{ text: string; callback_data?: string }>> }).inline_keyboard;

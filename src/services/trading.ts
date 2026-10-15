@@ -6,6 +6,7 @@ import type { AppDatabase, IntentRecord } from "../storage/database.js";
 import { PolyesterApiError } from "../polyester/transport.js";
 import { RiskGuard } from "./risk.js";
 import { multiplyDecimals } from "../utils/decimal.js";
+import { orderRejection } from "./order-rejection.js";
 
 export interface PreparedIntent {
   id: string;
@@ -35,7 +36,7 @@ export class TradingService {
     const id = randomUUID();
     const clientId = `tg-${randomUUID().replaceAll("-", "")}`;
     const preview = await this.gateway.previewOrder(draft, clientId);
-    if (!preview.admissible) throw new Error(`Order rejected by preview: ${preview.rejectionCode ?? "UNKNOWN"} ${preview.rejectionMessage ?? ""}`.trim());
+    if (!preview.admissible) throw new Error(orderRejection(preview, pair, draft));
     const expiresAt = Date.now() + this.config.confirmationTtlSeconds * 1_000;
     this.db.invalidateConfirmations(chatId, userId, "order");
     this.db.createIntent({

@@ -32,6 +32,24 @@ The installer reads interactive answers directly from the terminal, so the wizar
 
 ## Guided local installer: Windows and macOS (Beta)
 
+### Recovery after accidental file deletion
+
+Stop or uninstall the bot before deleting its files manually. A background process can keep running after its installed scripts have been removed.
+
+If local management commands no longer work, open the affected installation folder in the VS Code terminal and run:
+
+```text
+npx --yes github:web3cadet/pink-terminal --status
+npx --yes github:web3cadet/pink-terminal --stop
+npx --yes github:web3cadet/pink-terminal --uninstall
+```
+
+Run only the action you need. These commands load management code from the downloaded package, without reinstalling the bot or requesting credentials. Uninstall asks you to type `DELETE`; it preserves `.env` and unrelated top-level files. When `package.json` is missing, a valid installation marker is required and only `.runtime` and `data` are removed. Local history and logs are permanently deleted. Exchange orders and strategies are not cancelled.
+
+Keep `.runtime` until the bot has stopped: it contains the process-control information. If that information is also missing or cannot be verified, recovery must not guess which process to terminate. Use operating-system process tools to identify the instance instead.
+
+### Installation
+
 Install Node.js 22.12+ (including npm) and Git. Open an empty folder in VS Code and run the following command in its terminal. macOS users may also use Terminal in that folder:
 
 ```text

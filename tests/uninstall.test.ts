@@ -16,6 +16,15 @@ function remove(root: string) {
   return spawnSync(process.execPath, ["--input-type=module", "-e", `import {removeInstallation} from ${JSON.stringify(helper)};removeInstallation(${JSON.stringify(root)});`], { encoding: "utf8" });
 }
 describe("bounded uninstall", () => {
+  it("refuses unidentified residue after package deletion", () => {
+    const root = fixture();
+    try {
+      rmSync(path.join(root, "package.json"));
+      mkdirSync(path.join(root, "data"));
+      expect(remove(root).status).not.toBe(0);
+      expect(existsSync(path.join(root, "data"))).toBe(true);
+    } finally { rmSync(root, { recursive: true, force: true }); }
+  });
   it("deletes app/data while preserving env and unrelated files", () => {
     const root = fixture();
     try {

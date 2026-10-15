@@ -10,11 +10,18 @@ export function planUninstall(directory) {
     throw new Error("Refusing uninstall from a linked or broad directory.");
   }
   const packageFile = path.join(root, "package.json");
-  if (lstatSync(packageFile).isSymbolicLink() || JSON.parse(readFileSync(packageFile, "utf8")).name !== "pink-terminal") {
+  const partial = !existsSync(packageFile);
+  const marker = path.join(root, ".runtime", "install-source.json");
+  if (partial && (!existsSync(marker) || lstatSync(path.join(root, ".runtime")).isSymbolicLink() || lstatSync(marker).isSymbolicLink() ||
+      JSON.parse(readFileSync(marker, "utf8")).command !== "npx --yes github:web3cadet/pink-terminal")) {
+    throw new Error("Cannot identify this damaged installation. No files were deleted.");
+  }
+  if (!partial && (lstatSync(packageFile).isSymbolicLink() || JSON.parse(readFileSync(packageFile, "utf8")).name !== "pink-terminal")) {
     throw new Error("Not a Pink Terminal installation.");
   }
   if (existsSync(path.join(root, ".git"))) throw new Error("Uninstall is disabled in a source Git checkout. Use a dedicated installed copy.");
-  const targets = names.map(name => path.join(root, name)).filter(file => existsSync(file));
+  // Without package identity, clean only known runtime residue, not application-like folders.
+  const targets = (partial ? [".runtime", "data"] : names).map(name => path.join(root, name)).filter(file => existsSync(file));
   for (const file of targets) {
     if (path.basename(file).toLowerCase() === ".env" || path.dirname(file) !== root || lstatSync(file).isSymbolicLink() || realpathSync(file) !== file) {
       throw new Error("Refusing uninstall: linked or out-of-folder target.");

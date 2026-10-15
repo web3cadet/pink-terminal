@@ -19,6 +19,34 @@ function fixture() {
 const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
 describe("local runtimes", () => {
+  it.skipIf(process.platform !== "win32")("recovers stop and uninstall after installed scripts and package were deleted", () => {
+    const root = fixture();
+    const external = path.resolve("scripts/windows-installer.mjs");
+    const recovery = (action: string, input?: string) => spawnSync(process.execPath, [external, "--" + action], { cwd: root, input, encoding: "utf8", timeout: 20000 });
+    try {
+      const start = spawnSync(process.execPath, [path.join(root, "scripts/local-manager.mjs"), "start"], { cwd: root, encoding: "utf8" });
+      expect(start.status, start.stderr + start.stdout).toBe(0);
+      writeFileSync(path.join(root, ".runtime/install-source.json"), JSON.stringify({ command: "npx --yes github:web3cadet/pink-terminal" }));
+      mkdirSync(path.join(root, "data"));
+      writeFileSync(path.join(root, "data/history.txt"), "fixture");
+      writeFileSync(path.join(root, "personal.txt"), "keep");
+      rmSync(path.join(root, "scripts"), { recursive: true });
+      rmSync(path.join(root, "dist"), { recursive: true });
+      rmSync(path.join(root, "package.json"));
+      expect(recovery("status").stdout).toContain("RUNNING");
+      expect(recovery("uninstall", "NO\n").stdout).toContain("cancelled");
+      expect(recovery("status").stdout).toContain("RUNNING");
+      const stop = recovery("stop");
+      expect(stop.status, stop.stdout + stop.stderr).toBe(0);
+      expect(recovery("status").stdout).toContain("STOPPED");
+      const removed = recovery("uninstall", "DELETE\n");
+      expect(removed.status, removed.stdout + removed.stderr).toBe(0);
+      expect(existsSync(path.join(root, ".runtime"))).toBe(false);
+      expect(existsSync(path.join(root, "data"))).toBe(false);
+      expect(readFileSync(path.join(root, ".env"), "utf8")).toContain("TEST_FIXTURE_ONLY");
+      expect(readFileSync(path.join(root, "personal.txt"), "utf8")).toBe("keep");
+    } finally { recovery("stop"); rmSync(root, { recursive: true, force: true }); }
+  }, 30000);
   it("routes Windows to the existing manager and Mac to its beta manager", async () => {
     const { localPlatform } = await moduleAt("local-platform.mjs");
     expect(localPlatform("win32").manager).toBe("windows-manager.mjs");

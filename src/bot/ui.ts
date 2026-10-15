@@ -41,12 +41,13 @@ export function orderOptionsKeyboard(draft: Partial<OrderDraft>): InlineKeyboard
   return keyboard;
 }
 
-export function orderKindCard(symbol: string, side?: OrderSide): string {
+export function orderKindCard(symbol: string, side?: OrderSide, balances = ""): string {
   const displaySymbol = escapeHtml(symbol.replace("-", " / "));
   const sideLabel = side === "BUY" ? "🟢 BUY" : side === "SELL" ? "🔴 SELL" : "—";
   return [
     heading("New order · execution"),
     `<b>${displaySymbol}</b>  ·  ${sideLabel}`,
+    balances,
     "<code>STEP 3 OF 5  ·  EXECUTION</code>",
     "",
     "<b>How should this order execute?</b>",

@@ -190,6 +190,7 @@ export interface TriggerSummary {
 }
 
 export interface ExchangeGateway {
+  getSpotFeeRates?(symbolId: number): Promise<{ maker: string; taker: string }>;
   getAccountStats?(): Promise<{ volume30dUsd?: string; asOf?: string }>;
   getCatalog(force?: boolean): Promise<SpotCatalog>;
   listMarketOverview(): Promise<MarketOverview[]>;
