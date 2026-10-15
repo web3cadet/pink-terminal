@@ -9,11 +9,11 @@ import type { ExchangeGateway, OrderDraft, OrderKind, OrderSide, PairConfig } fr
 const databases: AppDatabase[] = [];
 afterEach(() => { databases.splice(0).forEach(db => db.close()); vi.useRealTimers(); });
 
-function setup(side: OrderSide, kind: OrderKind, mode = "live") {
+function setup(side: OrderSide, kind: OrderKind, mode = "live", currencies = { base: "BNB", quote: "USDT" }) {
   vi.useFakeTimers();
   const db = new AppDatabase(":memory:"); databases.push(db);
   const pair: PairConfig = {
-    symbolId: 1, symbol: "BNB-USDT", baseAsset: "BNB", quoteAsset: "USDT", tickSize: "0.01", stepSize: "0.001",
+    symbolId: 1, symbol: `${currencies.base}-${currencies.quote}`, baseAsset: currencies.base, quoteAsset: currencies.quote, tickSize: "0.01", stepSize: "0.001",
     minQtyBase: "0.001", minNotionalQuote: "5", baseQuantityScale: 18, quoteQuantityScale: 18, referencePriceScale: 18,
     status: "PAIR_STATUS_ENABLED", defaultMarketSlippageBpsBuy: 100, defaultMarketSlippageBpsSell: 100, maxClientRefDriftBps: 100
   };
@@ -21,7 +21,7 @@ function setup(side: OrderSide, kind: OrderKind, mode = "live") {
   const previewOrder = vi.fn(async () => ({ admissible: true, raw: {} }));
   const market = { symbolId: 1, lastPrice: "450", bestBid: "400", bestAsk: "500" };
   const gateway = {
-    getCatalog: async () => ({ pairs: [pair], assets: [{ asset: "BNB", ledgerId: 1 }, { asset: "USDT", ledgerId: 2 }] }),
+    getCatalog: async () => ({ pairs: [pair], assets: [{ asset: currencies.base, ledgerId: 1 }, { asset: currencies.quote, ledgerId: 2 }] }),
     listMarketOverview: async () => [market],
     listOpenOrders: async () => [],
     listBalances: async () => [{ assetId: 1, trading: "1400000000000000000", funding: "0", reserved: "0", available: "1400000000000000000" }, { assetId: 2, trading: "169814199544793805000", funding: "0", reserved: "0", available: "169814199544793805000" }],
@@ -52,7 +52,7 @@ function setup(side: OrderSide, kind: OrderKind, mode = "live") {
     const rows = (lastPanel().payload.reply_markup as { inline_keyboard: { callback_data?: string }[][] }).inline_keyboard;
     return rows.flat().find(button => button.callback_data?.startsWith("confirm:o:"))!.callback_data!;
   };
-  db.saveWizard(1, 1, { flow: "order", step: "kind", data: { symbolId: 1, symbol: "BNB-USDT", side } });
+  db.saveWizard(1, 1, { flow: "order", step: "kind", data: { symbolId: 1, symbol: pair.symbol, side } });
   const button = (label: string) => (lastPanel().payload.reply_markup as { inline_keyboard: { text: string; callback_data: string }[][] }).inline_keyboard.flat().find(b => b.text === label)!.callback_data;
   return { db, config, button, calls, gateway, market, previewOrder, createOrder, callback, input, command, lastPanel, confirmId, kind, failNextEdit: (description: string) => { editFailure = description; } };
 }
@@ -248,5 +248,98 @@ describe("quote amount flow: inline navigation and chronological replies", () =>
       expect(String(f.lastPanel().payload.text)).toContain("for Polyester testnet\n🟢 Status: online");
     }
     expect(f.createOrder).toHaveBeenCalledOnce();
+  });
+});
+
+describe("configured units and balance percentages through the full order wizard", () => {
+  for (const quote of ["USDT", "USDC", "BTC"]) for (const mode of ["base", "quote"] as const) {
+    for (const side of ["BUY", "SELL"] as const) for (const kind of ["MARKET_IOC", "LIMIT_GTC", "LIMIT_GTD", "LIMIT_IOC", "LIMIT_FOK"] as const) {
+      it(`${quote} / ${mode} / ${side} / ${kind}: percentage uses the correct balance and stays frozen`, async () => {
+        const f = setup(side, kind, "live", { base: "ETH", quote });
+        f.db.setOrderAmountMode(1, 1, confirmationAccountContext(f.config), mode);
+        f.market.bestBid = "20"; f.market.bestAsk = "25"; f.market.lastPrice = "25";
+        let balances = [{ assetId: 1, trading: "50000000000000000000", funding: "0", reserved: "10000000000000000000", available: "40000000000000000000" }, { assetId: 2, trading: "600000000000000000000", funding: "0", reserved: "100000000000000000000", available: "500000000000000000000" }];
+        f.gateway.listBalances = async () => balances;
+        await f.callback(`ordkind:${kind}`);
+        const prompt = String(f.lastPanel().payload.text);
+        expect(prompt).toContain(mode === "quote" ? `Enter the amount in ${quote}` : "Enter the quantity of ETH");
+        expect(prompt).toContain(`10%</b> of your available <b>${side === "BUY" ? quote : "ETH"}</b>`);
+        await f.input("10%");
+        // A later balance change must not turn 10% into a different order.
+        balances = balances.map(b => ({ ...b, available: "900000000000000000000" }));
+        if (kind !== "MARKET_IOC") await f.input("20");
+        if (kind === "LIMIT_GTD") await f.input("60");
+        expect(f.createOrder).not.toHaveBeenCalled();
+        const id = f.confirmId();
+        const intent = f.db.getIntent(id.slice("confirm:o:".length))!;
+        expect(intent.payload).toMatchObject({ balancePercent: "10", percentageAsset: side === "BUY" ? quote : "ETH", percentageBalance: side === "BUY" ? "500" : "40", qty: side === "SELL" ? "4" : kind === "MARKET_IOC" ? "2" : "2.5" });
+        expect(intent.payload.quoteAmount).toBe(side === "BUY" ? "50" : undefined);
+        expect(String(f.lastPanel().payload.text)).toContain(`Balance share: <b>10%</b> of available ${side === "BUY" ? quote : "ETH"}`);
+        await f.callback(id);
+        expect(f.createOrder).toHaveBeenCalledOnce();
+        await f.callback(id); // The handler presents the consumed-confirmation error without another write.
+        expect(f.createOrder).toHaveBeenCalledOnce();
+      });
+      it(`${quote} / ${mode} / ${side} / ${kind}: exact input retains selected units`, async () => {
+        const f = setup(side, kind, "live", { base: "ETH", quote });
+        f.db.setOrderAmountMode(1, 1, confirmationAccountContext(f.config), mode);
+        await f.callback(`ordkind:${kind}`); await f.input("100");
+        if (kind !== "MARKET_IOC") await f.input("250");
+        if (kind === "LIMIT_GTD") await f.input("60");
+        const id = f.confirmId(); const payload = f.db.getIntent(id.slice("confirm:o:".length))!.payload;
+        expect(payload.quoteAmount).toBe(mode === "quote" ? "100" : undefined);
+        expect(payload.qty).toBe(mode === "base" ? "100" : kind === "MARKET_IOC" ? side === "BUY" ? "0.2" : "0.25" : "0.4");
+        expect(payload.balancePercent).toBeUndefined();
+        await f.callback(id); expect(f.createOrder).toHaveBeenCalledOnce();
+      });
+    }
+  }
+  it("blocks a rejected 100% buy without silently reducing the order or submitting", async () => {
+    const f = setup("BUY", "MARKET_IOC");
+    f.db.setOrderConfirmation(1, 1, confirmationAccountContext(f.config), false);
+    f.previewOrder.mockResolvedValueOnce({ admissible: false, rejectionCode: "ERROR_CODE_INSUFFICIENT_FUNDS", raw: {} } as never);
+    await f.callback("ordkind:MARKET_IOC"); await f.input("100%");
+    expect(f.createOrder).not.toHaveBeenCalled();
+    expect(String(f.lastPanel().payload.text)).toContain("Fee");
+  });
+  it("submits concurrent percent messages only once when final confirmation is off", async () => {
+    const f = setup("BUY", "MARKET_IOC");
+    f.db.setOrderConfirmation(1, 1, confirmationAccountContext(f.config), false);
+    await f.callback("ordkind:MARKET_IOC");
+    await Promise.all([f.input("10%"), f.input("10%")]);
+    expect(f.previewOrder).toHaveBeenCalledOnce(); expect(f.createOrder).toHaveBeenCalledOnce();
+    expect(f.db.getWizard(1, 1)).toBeNull();
+  });
+  it("does not interpret a percent as a limit price", async () => {
+    const f = setup("SELL", "LIMIT_GTC");
+    await f.callback("ordkind:LIMIT_GTC"); await f.input("50%"); await f.input("10%");
+    expect(f.db.getWizard(1, 1)?.step).toBe("price");
+    expect(f.previewOrder).not.toHaveBeenCalled(); expect(f.createOrder).not.toHaveBeenCalled();
+  });
+  it("does not reuse a previous amount after an invalid percent or failed balance read", async () => {
+    const f = setup("BUY", "MARKET_IOC");
+    await f.callback("ordkind:MARKET_IOC");
+    for (const value of ["0%", "101%", "-10%", "NaN%", "10%%"]) {
+      await f.input(value); expect(f.db.getWizard(1, 1)?.step).toBe("size");
+    }
+    f.gateway.listBalances = async () => { throw Error("offline"); };
+    await f.input("10%");
+    expect(f.previewOrder).not.toHaveBeenCalled(); expect(f.createOrder).not.toHaveBeenCalled();
+  });
+  it("uses owner-bound Configuration controls and does not expose confirmation under Security", async () => {
+    const f = setup("BUY", "MARKET_IOC");
+    await f.callback("configuration");
+    const setMode = f.button("Token quantity · ETH / BTC / …");
+    await f.callback(setMode, 2);
+    expect(f.db.orderAmountMode(1, 1, confirmationAccountContext(f.config))).toBe("quote");
+    await f.callback(setMode);
+    expect(f.db.orderAmountMode(1, 1, confirmationAccountContext(f.config))).toBe("base");
+    await f.callback(f.button("Order confirmation"));
+    await f.callback(f.button("Disable final confirmation"));
+    expect(f.db.orderConfirmationEnabled(1, 1, confirmationAccountContext(f.config))).toBe(false);
+    await f.callback("safety");
+    expect(JSON.stringify(f.lastPanel().payload.reply_markup)).not.toContain("confirmation");
+    await f.callback("security:confirmation"); // Old saved panels still navigate safely.
+    expect(String(f.lastPanel().payload.text)).toContain("Final confirmation: OFF");
   });
 });

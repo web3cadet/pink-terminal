@@ -28,7 +28,11 @@ describe("local runtimes", () => {
     try {
       await expect(bot.exclusive(() => bot.start())).rejects.toThrow(/startup failed/);
       expect((await bot.state()).running).toBe(false);
-    } finally { await bot.exclusive(() => bot.stop()); rmSync(root, { recursive: true, force: true }); }
+    } finally {
+      await bot.exclusive(() => bot.stop());
+      // Windows may release directory handles just after the child exits.
+      rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+    }
   }, 15000);
   it.skipIf(process.platform !== "win32")("does not report Windows startup success before Telegram readiness", () => {
     const root = fixture();

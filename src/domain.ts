@@ -97,6 +97,10 @@ export interface OrderDraft {
   /** UI sizing only; the exchange receives the resolved, step-aligned qty. */
   quoteAmount?: string;
   sizingPrice?: string;
+  /** Frozen balance percentage; never recalculated when confirmation is clicked. */
+  balancePercent?: string;
+  percentageAsset?: string;
+  percentageBalance?: string;
   price?: string;
   expireAt?: string;
   postOnly?: boolean;

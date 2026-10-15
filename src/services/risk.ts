@@ -16,7 +16,9 @@ export class RiskGuard {
       if (compareDecimals(draft.price, "0") <= 0) throw new Error("Price must be positive");
     }
     const quoteBudget = draft.maxQuoteDebit;
-    const price = draft.price ?? market?.lastPrice ?? undefined;
+    // Last trade can be far from the current bid/ask (especially on testnet).
+    // Use this order's execution side, not an unrelated historical print.
+    const price = draft.price ?? (draft.side === "BUY" ? market?.bestAsk : market?.bestBid) ?? draft.sizingPrice ?? market?.lastPrice ?? undefined;
     const estimated = quoteBudget ?? (draft.qty && price ? multiplyDecimals(draft.qty, price) : undefined);
     if (estimated && compareDecimals(estimated, pair.minNotionalQuote) < 0) {
       throw new Error(`Minimum notional is ${pair.minNotionalQuote} ${pair.quoteAsset}`);

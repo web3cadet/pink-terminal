@@ -9,7 +9,7 @@ export function mainKeyboard(readOnly = false): InlineKeyboard {
     .text(readOnly ? "📊 Markets" : "📈 Trading", "markets:0").text("💼 Balances", "balances").row()
     .text("📋 Open orders", "orders:open").text("🗂 Order history", "orders:history").row()
     .text("⚡ Strategies", "triggers:list").text("🛡 Security", "safety").row()
-    .text("ℹ️ Help", "help").row()
+    .text("⚙ Configuration", "configuration").text("ℹ️ Help", "help").row()
     .text("↻ Refresh terminal", "home");
   return keyboard;
 }
@@ -87,10 +87,12 @@ export function formatOrderDraft(draft: Partial<OrderDraft>): string {
   return [
     `<b>${escapeHtml(draft.side ?? "—")} ${escapeHtml(draft.symbol ?? "—")}</b>`,
     `Order: <b>${kind}</b>`,
+    draft.balancePercent ? `Balance share: <b>${escapeHtml(draft.balancePercent)}%</b> of available ${escapeHtml(draft.percentageAsset ?? "")}` : null,
     draft.quoteAmount ? `${draft.side === "SELL" ? "Sell" : "Buy"} for: <b>${escapeHtml(draft.quoteAmount)} ${quote}</b> (before Fee)` : null,
     draft.qty ? `Quantity: <code>${escapeHtml(draft.qty)} ${base}</code>` : draft.maxQuoteDebit ? `Spend up to: <code>${escapeHtml(draft.maxQuoteDebit)} ${quote}</code> (including Fee)` : draft.quoteAmount ? null : "Amount: <b>Not set</b>",
     draft.quoteAmount && draft.qty && draft.sizingPrice ? `Estimated value: <code>${multiplyDecimals(draft.qty, draft.sizingPrice)} ${quote}</code> before Fee` : null,
     draft.quoteAmount ? `<i>Quantity is rounded down to the pair's step. ${draft.kind === "MARKET_IOC" ? "Market execution may change the final value." : "Final value depends on the fill price and filled quantity."} ${draft.side === "SELL" ? "Fee reduces your proceeds." : "Fee is charged in addition to the trade value."}</i>` : null,
+    draft.balancePercent && !draft.quoteAmount ? "<i>Quantity is rounded down to the pair's step. Fee reduces your proceeds.</i>" : null,
     draft.price ? `Price: <code>${escapeHtml(draft.price)} ${quote}</code>` : null,
     draft.expireAt ? `Expires: <code>${escapeHtml(draft.expireAt)}</code>` : null,
     draft.postOnly ? "Post-only: yes" : null,

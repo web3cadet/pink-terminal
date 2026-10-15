@@ -11,7 +11,7 @@ import { escapeHtml, shorten } from "../utils/html.js";
 import { formatOrderDraft, formatTriggerDraft, mainKeyboard, orderKindCard, orderKindKeyboard, orderOptionsKeyboard, pairsKeyboard, sparkline } from "./ui.js";
 import { renderOverview } from "./overview.js";
 import { orderBalances, orderMinimums, orderFeeLine } from "./order-context.js";
-import { resolveQuoteAmount } from "./order-sizing.js";
+import { applyOrderAmountInput, resolveQuoteAmount } from "./order-sizing.js";
 import { assetLink, heading, modeText, numberText, pairLink, pairUrl, positiveInput, terminalHeading, WEBSITE } from "./presentation.js";
 
 const PAGE_SIZE = 8;
@@ -82,7 +82,9 @@ export function createTelegramBot(deps: {
           quote ? `<b>Enter the amount in ${currency} to ${sell ? "sell" : "buy"} ${base} for.</b>`
             : `<b>Enter the quantity of ${base} to ${sell ? "sell" : "buy"}.</b>`,
           quote ? `For example, 100 = ${sell ? "sell" : "buy"} about 100 ${currency} worth of ${base}, before Fee.` : `For example, 1 = 1 ${base}.`,
-          "", orderMinimums(pair), "", "Send a number in this chat."
+          `Or send a percentage, e.g. <b>10%</b> of your available <b>${sell ? base : currency}</b> ${sell ? "to sell" : "to spend"}.`,
+          sell ? "Percentages always sell a share of your token balance, even in quote-value mode." : "Fee is additional. Leave funds for Fee when buying, including with percentages.",
+          "", orderMinimums(pair), "", "Send an amount or percentage in this chat."
         ].join("\n")
     ].join("\n");
     const keyboard = new InlineKeyboard();
@@ -325,7 +327,7 @@ export function createTelegramBot(deps: {
     await editOrReply(ctx, [
       terminalHeading("Help"),
       "",
-      "<b>Trading</b> — choose a market and enter the amount. Confirm once, unless you disabled final confirmation in Security.",
+      "<b>Trading</b> — choose a market and enter an amount or a balance percentage. Set input units and final confirmation in Configuration.",
       "<b>Strategies</b> — configure the required values and confirm once; accepted strategies then run automatically on Polyester.",
       "<b>Orders</b> — inspect fill progress or cancel open orders.",
       "",
@@ -343,12 +345,29 @@ export function createTelegramBot(deps: {
         : config.tradingMode === "paper" ? "🧪 <b>PAPER</b> · transactions are simulated"
         : "🔒 <b>READ ONLY</b> · writes are blocked",
       `API connection: <b>${config.apiKeyId && config.apiSecretHex ? "connected" : "not configured"}</b>`,
-      `Final confirmation: <b>${confirmationEnabled(ctx) ? "ON" : "OFF · immediate submission"}</b>`,
-      `Final confirmation remains valid for <b>${config.confirmationTtlSeconds} seconds</b>.`,
       "",
       "This interface has no withdrawal action. Effective permissions are controlled by the policy attached to your Polyester API key."
-    ].join("\n"), new InlineKeyboard().text("Order confirmation", "security:confirmation").row().text("‹ Overview", "home"));
+    ].join("\n"), new InlineKeyboard().text("‹ Overview", "home"));
   });
+
+  const showConfiguration = async (ctx: Context) => {
+    const ids = requireIds(ctx);
+    const mode = database.orderAmountMode(ids.chatId, ids.userId, accountContext);
+    await editOrReply(ctx, [terminalHeading("Configuration"), "",
+      `Final confirmation: <b>${confirmationEnabled(ctx) ? "ON" : "OFF · immediate submission"}</b>`,
+      `Amount input: <b>${mode === "base" ? "Token quantity" : "Quote value"}</b>`, "",
+      "<b>Quote value</b> — enter the trade value in the pair's quote currency: USDT, USDC or another asset.",
+      "<b>Token quantity</b> — enter how many base tokens to buy or sell, such as ETH in ETH/USDC.", "",
+      "<b>Percentages work in both modes</b>",
+      "Buy: % of the available payment asset. Fee is additional.",
+      "Sell: % of the available token being sold.",
+      "Amounts are fixed when entered; market prices may change before execution."
+    ].join("\n"), new InlineKeyboard().text("Order confirmation", "configuration:confirmation").row()
+      .text(`${mode === "quote" ? "✓ " : ""}Quote value · USDT / USDC / …`, controlButton(ctx, { kind: "set_amount_mode", targetId: "quote", symbolId: 0 })).row()
+      .text(`${mode === "base" ? "✓ " : ""}Token quantity · ETH / BTC / …`, controlButton(ctx, { kind: "set_amount_mode", targetId: "base", symbolId: 0 })).row()
+      .text("‹ Overview", "home"));
+  };
+  bot.callbackQuery("configuration", async ctx => { await ctx.answerCallbackQuery(); clearFlow(ctx, database); await showConfiguration(ctx); });
 
   const showConfirmationSettings = async (ctx: Context) => {
     const enabled = confirmationEnabled(ctx);
@@ -358,9 +377,10 @@ export function createTelegramBot(deps: {
       "", "This setting applies to your regular orders, not strategies. API validation and access checks remain active.",
       "Saved for your Telegram user and current API configuration. A different key defaults to confirmation ON."
     ].join("\n"), new InlineKeyboard().text(enabled ? "Disable final confirmation" : "Enable final confirmation",
-      controlButton(ctx, { kind: "set_confirmation", targetId: enabled ? "off" : "on", symbolId: 0 })).row().text("‹ Security", "safety"));
+      controlButton(ctx, { kind: "set_confirmation", targetId: enabled ? "off" : "on", symbolId: 0 })).row().text("‹ Configuration", "configuration"));
   };
   bot.callbackQuery("security:confirmation", async ctx => { await ctx.answerCallbackQuery(); await showConfirmationSettings(ctx); });
+  bot.callbackQuery("configuration:confirmation", async ctx => { await ctx.answerCallbackQuery(); await showConfirmationSettings(ctx); });
   bot.callbackQuery(/^ordskip:([0-9a-f-]+)$/, async ctx => {
     const ids = requireIds(ctx);
     const intent = database.getIntent(ctx.match[1]!);
@@ -370,7 +390,7 @@ export function createTelegramBot(deps: {
     }
     database.setOrderConfirmation(ids.chatId, ids.userId, accountContext, false);
     await ctx.answerCallbackQuery({ text: "Disabled for future orders. Confirm this order once." });
-    await editOrReply(ctx, `${terminalHeading("Confirm this order")}\n\n${formatOrderDraft(intent.payload as unknown as OrderDraft)}\n${await orderFeeLine(gateway, Number(intent.payload.symbolId))}\n\nFinal confirmation is OFF for future orders. Enable it again in Security.\nThis order has NOT been sent. Confirm or cancel below.`,
+    await editOrReply(ctx, `${terminalHeading("Confirm this order")}\n\n${formatOrderDraft(intent.payload as unknown as OrderDraft)}\n${await orderFeeLine(gateway, Number(intent.payload.symbolId))}\n\nFinal confirmation is OFF for future orders. Enable it again in Configuration.\nThis order has NOT been sent. Confirm or cancel below.`,
       new InlineKeyboard().text("✅ Confirm", `confirm:o:${intent.id}`).row().text("✕ Cancel", "home"));
   });
 
@@ -477,11 +497,13 @@ export function createTelegramBot(deps: {
     await ctx.answerCallbackQuery();
     const state = requireFlow(ctx, database, "order");
     state.data.kind = ctx.match[1];
-    state.data.sizingMode = "quote";
+    const ids = requireIds(ctx);
+    state.data.sizingMode = database.orderAmountMode(ids.chatId, ids.userId, accountContext);
     delete state.data.qty;
     delete state.data.maxQuoteDebit;
     delete state.data.quoteAmount;
     delete state.data.sizingPrice;
+    delete state.data.balancePercent; delete state.data.percentageAsset; delete state.data.percentageBalance;
     delete state.data.inputError;
     state.step = "size";
     saveFlow(ctx, database, state);
@@ -491,6 +513,7 @@ export function createTelegramBot(deps: {
     await ctx.answerCallbackQuery();
     const state = requireFlow(ctx, database, "order");
     state.data.sizingMode = ctx.match[1]; state.step = "size";
+    delete state.data.balancePercent; delete state.data.percentageAsset; delete state.data.percentageBalance;
     delete state.data.qty;
     delete state.data.maxQuoteDebit;
     delete state.data.quoteAmount;
@@ -666,6 +689,12 @@ export function createTelegramBot(deps: {
       database.setOrderConfirmation(ids.chatId, ids.userId, accountContext, targetId !== "off");
       await showConfirmationSettings(ctx); return;
     }
+    if (kind === "set_amount_mode") {
+      if (targetId !== "base" && targetId !== "quote") throw new Error("Unknown amount mode");
+      database.setOrderAmountMode(ids.chatId, ids.userId, accountContext, targetId);
+      database.invalidateControlActions(ids.chatId, ids.userId);
+      await showConfiguration(ctx); return;
+    }
     if (config.tradingMode === "read_only") return;
     if (kind === "cancel_order_prompt" || kind === "cancel_trigger_prompt") {
       const order = kind === "cancel_order_prompt";
@@ -836,11 +865,8 @@ export function createTelegramBot(deps: {
       try {
         delete state.data.inputError;
         if (state.step === "size") {
-          const amount = positiveInput(text);
-          delete state.data.maxQuoteDebit;
-          delete state.data.sizingPrice;
-          if (state.data.sizingMode === "quote") { state.data.quoteAmount = amount; delete state.data.qty; }
-          else { state.data.qty = amount; delete state.data.quoteAmount; }
+          const pair = requirePair((await gateway.getCatalog()).pairs, Number(state.data.symbolId));
+          await applyOrderAmountInput(gateway, pair, state.data as unknown as OrderDraft, text, state.data.sizingMode === "quote" ? "quote" : "base");
           state.step = state.data.kind !== "MARKET_IOC" && !state.data.price ? "price" : state.data.kind === "LIMIT_GTD" && !state.data.expireAt ? "expiry" : "options";
         } else if (state.step === "price") {
           state.data.price = positiveInput(text);

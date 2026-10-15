@@ -17,5 +17,11 @@ it("persists the opt-out across database reopen without affecting a different co
     expect(db.orderConfirmationEnabled(1, 1, "account-b")).toBe(true);
     db.setOrderConfirmation(1, 1, "account-a", true);
     expect(db.orderConfirmationEnabled(1, 1, "account-a")).toBe(true);
+    expect(db.orderAmountMode(1, 1, "account-a")).toBe("quote");
+    db.setOrderAmountMode(1, 1, "account-a", "base"); db.close(); db = new AppDatabase(file);
+    expect(db.orderAmountMode(1, 1, "account-a")).toBe("base");
+    expect(db.orderAmountMode(1, 2, "account-a")).toBe("quote");
+    expect(db.orderAmountMode(2, 1, "account-a")).toBe("quote");
+    expect(db.orderAmountMode(1, 1, "account-b")).toBe("quote");
   } finally { db?.close(); rmSync(root, { recursive: true, force: true }); }
 });

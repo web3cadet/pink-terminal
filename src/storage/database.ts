@@ -27,7 +27,7 @@ export interface IntentRecord {
 }
 
 export interface ControlAction {
-  kind: "cancel_order_prompt" | "cancel_order" | "cancel_trigger_prompt" | "cancel_trigger" | "pause_trigger" | "resume_trigger" | "cancel_all" | "set_confirmation";
+  kind: "cancel_order_prompt" | "cancel_order" | "cancel_trigger_prompt" | "cancel_trigger" | "pause_trigger" | "resume_trigger" | "cancel_all" | "set_confirmation" | "set_amount_mode";
   targetId: string;
   symbolId: number;
 }
@@ -51,6 +51,14 @@ export class AppDatabase {
 
   setOrderConfirmation(chatId: number, userId: number, context: string, enabled: boolean): void {
     this.rememberStatus(`order_confirmation:${chatId}:${userId}:${context}`, enabled ? "on" : "off");
+  }
+
+  orderAmountMode(chatId: number, userId: number, context: string): "base" | "quote" {
+    return this.readStatus(`order_amount_mode:${chatId}:${userId}:${context}`) === "base" ? "base" : "quote";
+  }
+
+  setOrderAmountMode(chatId: number, userId: number, context: string, mode: "base" | "quote"): void {
+    this.rememberStatus(`order_amount_mode:${chatId}:${userId}:${context}`, mode);
   }
 
   createControlAction(id: string, chatId: number, userId: number, context: string, action: ControlAction, expiresAt: number): void {

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { AppConfig } from "../src/config.js";
-import type { PairConfig } from "../src/domain.js";
+import type { MarketOverview, PairConfig } from "../src/domain.js";
 import { RiskGuard } from "../src/services/risk.js";
 
 const config: AppConfig = {
@@ -18,6 +18,12 @@ const pair: PairConfig = {
 
 describe("local risk guard", () => {
   const guard = new RiskGuard(config);
+  it("checks market notional against the execution side instead of a stale last trade", () => {
+    const p = { ...pair, symbol: "USDC-USDT", baseAsset: "USDC", stepSize: "0.000001", minQtyBase: "1" };
+    const market = { symbolId: 1, lastPrice: "0.63", bestAsk: "0.978", bestBid: "0.62" } as MarketOverview;
+    expect(() => guard.validateOrder({ symbolId: 1, symbol: p.symbol, side: "BUY", kind: "MARKET_IOC", qty: "6.34", quoteAmount: "6.2", sizingPrice: "0.978" }, p, market)).not.toThrow();
+    expect(() => guard.validateOrder({ symbolId: 1, symbol: p.symbol, side: "SELL", kind: "MARKET_IOC", qty: "6.34" }, p, market)).toThrow(/Minimum notional/);
+  });
 
   it("rejects a ladder whose equal children violate the quantity step", () => {
     const p = { ...pair, baseAsset: "ETC", stepSize: "0.000001", minQtyBase: "0.1" };
