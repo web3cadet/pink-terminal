@@ -10,11 +10,11 @@ describe("order context", () => {
       getCatalog: async () => ({ assets: [{ asset: "AVAX", ledgerId: "a" }, { asset: "USDT", ledgerId: "u" }] }),
       listBalances: async () => [{ assetId: "a", available: "1250000000000000000", locked: "9000000000000000000" }, { assetId: "u", available: "5000000000000000000" }]
     } as unknown as ExchangeGateway;
-    expect(await orderBalances(gateway, pair)).toContain("AVAX: <b>1.25</b> · USDT: <b>5</b>");
+    expect(await orderBalances(gateway, pair)).toContain("AVAX: <b>1.25</b>\nUSDT: <b>5</b>");
   });
   it("does not misrepresent failed balance reads as zero", async () => {
     const gateway = { getCatalog: async () => { throw new Error("offline"); }, listBalances: async () => [] } as unknown as ExchangeGateway;
-    expect(await orderBalances(gateway, pair)).toContain("AVAX: unavailable · USDT: unavailable");
+    expect(await orderBalances(gateway, pair)).toContain("AVAX: unavailable\nUSDT: unavailable");
   });
   it("uses pair minimums without inventing a minimum budget", () => {
     expect(orderMinimums(pair, true)).toContain("5 USDT");

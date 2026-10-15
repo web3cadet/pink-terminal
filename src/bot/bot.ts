@@ -39,7 +39,11 @@ export function createTelegramBot(deps: {
         : state.step === "price" ? `Enter your limit price in ${escapeHtml(pair.quoteAsset)}. Price step: ${escapeHtml(pair.tickSize)}.`
         : `${orderMinimums(pair, state.data.sizingMode === "quote")}\n\nEnter ${state.data.sizingMode === "quote" ? "the maximum budget" : "the quantity"} as a number.`
     ].join("\n");
-    const response = await ctx.reply(prompt, { parse_mode: "HTML", reply_markup: { force_reply: true, selective: true, input_field_placeholder: label } });
+    const canSwitch = state.step === "size" && state.data.side === "BUY" && ["MARKET_IOC", "LIMIT_IOC"].includes(String(state.data.kind));
+    const keyboard = new InlineKeyboard()
+      .text(state.data.sizingMode === "quote" ? `Enter quantity · ${pair.baseAsset}` : `Enter budget · ${pair.quoteAsset}`, state.data.sizingMode === "quote" ? "ordsize:base" : "ordsize:quote").row()
+      .text("✕ Cancel order", "cancel-flow");
+    const response = await ctx.reply(prompt, { parse_mode: "HTML", reply_markup: canSwitch ? keyboard : { force_reply: true, selective: true, input_field_placeholder: label } });
     state.data.inputPromptId = response.message_id;
     saveFlow(ctx, database, state);
   };
@@ -349,22 +353,17 @@ export function createTelegramBot(deps: {
     await ctx.answerCallbackQuery();
     const state = requireFlow(ctx, database, "order");
     state.data.kind = ctx.match[1];
-    const pair = requirePair((await gateway.getCatalog()).pairs, Number(state.data.symbolId));
-    const canQuote = state.data.side === "BUY" && (ctx.match[1] === "MARKET_IOC" || ctx.match[1] === "LIMIT_IOC");
-    if (canQuote) {
-      state.step = "sizing"; saveFlow(ctx, database, state);
-      await editOrReply(ctx, `${heading("New order · amount")}\n${pairLink(pair.symbol)} · 🟢 Buy\n\n${await orderBalances(gateway, pair)}\n\n<b>How do you want to define the purchase?</b>\n\n<b>Buy amount</b> — set how much ${escapeHtml(pair.baseAsset)} to receive.\n<b>Spend up to</b> — set the maximum ${escapeHtml(pair.quoteAsset)} to spend.\n\n${orderMinimums(pair, true)}`, new InlineKeyboard()
-        .text(`Buy amount · ${pair.baseAsset}`, "ordsize:base").row()
-        .text(`Spend up to · ${pair.quoteAsset}`, "ordsize:quote").row()
-        .text("✕ Cancel order", "cancel-flow"));
-    } else {
-      state.data.sizingMode = "base"; state.step = "size"; saveFlow(ctx, database, state);
-      await requestInput(ctx, state);
-    }
+    state.data.sizingMode = "base";
+    delete state.data.qty;
+    delete state.data.maxQuoteDebit;
+    state.step = "size";
+    saveFlow(ctx, database, state);
+    await requestInput(ctx, state);
   });
   bot.callbackQuery(/^ordsize:(base|quote)$/, async (ctx) => {
     await ctx.answerCallbackQuery();
     const state = requireFlow(ctx, database, "order");
+    if (ctx.match[1] === "quote" && (state.data.side !== "BUY" || !["MARKET_IOC", "LIMIT_IOC"].includes(String(state.data.kind)))) throw new Error("Budget sizing is only available for BUY Market IOC and Limit IOC orders.");
     state.data.sizingMode = ctx.match[1]; state.step = "size";
     delete state.data.qty;
     delete state.data.maxQuoteDebit;
@@ -830,6 +829,7 @@ async function showPair(ctx: Context, gateway: ExchangeGateway, symbolId: number
     heading("Market overview"), pairLink(pair.symbol), "",
     `<b>${pair.quoteAsset === "USDT" ? "$" : ""}${numberText(market?.lastPrice)} ${escapeHtml(pair.quoteAsset)}</b>`,
     `24h: <code>${escapeHtml(change)}</code>`,
+    await orderBalances(gateway, pair),
     "", `<b>◈ CHART · ${escapeHtml(timeframe)}</b>`, `<code>${sparkline(closes)}</code>`, "",
     "<b>▥ MARKET DATA</b>",
     `🟢 Bid  ${numberText(bid)}\n🔴 Ask  ${numberText(ask)}`,

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { mkdtempSync, cpSync, mkdirSync, writeFileSync, readFileSync, existsSync, realpathSync, rmSync } from "node:fs";
+import { mkdtempSync, copyFileSync, readdirSync, mkdirSync, writeFileSync, readFileSync, existsSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -8,8 +8,9 @@ import { spawnSync } from "node:child_process";
 async function moduleAt(name: string) { return import(pathToFileURL(path.resolve("scripts", name)).href); }
 const dummy = `console.log('fixture_started'); await new Promise(resolve => process.once('SIGTERM', () => { console.log('fixture_stopped'); resolve(); }));`;
 function fixture() {
-  const root = realpathSync(mkdtempSync(path.join(tmpdir(), "Pink Terminal runtime ")));
-  cpSync(path.resolve("scripts"), path.join(root, "scripts"), { recursive: true });
+  const root = realpathSync(mkdtempSync(path.join(tmpdir(), "Pink Terminal тест runtime ")));
+  mkdirSync(path.join(root, "scripts"));
+  for (const file of readdirSync(path.resolve("scripts"))) copyFileSync(path.resolve("scripts", file), path.join(root, "scripts", file));
   mkdirSync(path.join(root, "dist"));
   writeFileSync(path.join(root, "dist", "index.js"), dummy);
   writeFileSync(path.join(root, "package.json"), '{"name":"pink-terminal","type":"module"}');
@@ -19,7 +20,32 @@ function fixture() {
 const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
 describe("local runtimes", () => {
-  it.skipIf(process.platform !== "win32")("recovers stop and uninstall after installed scripts and package were deleted", () => {
+  it.skipIf(process.platform !== "win32")("preserves corrupt or unverified Windows state", () => {
+    const root = fixture();
+    const run = (action: string) => spawnSync(process.execPath, [path.join(root, "scripts/local-manager.mjs"), action], { cwd: root, encoding: "utf8", timeout: 15000 });
+    try {
+      mkdirSync(path.join(root, ".runtime"));
+      const stateFile = path.join(root, ".runtime/windows-bot.json");
+      for (const state of ["{broken", JSON.stringify({ pid: process.pid, pipeName: "invalid" })]) {
+        writeFileSync(stateFile, state);
+        expect(run("start").status).not.toBe(0);
+        expect(run("stop").status).not.toBe(0);
+        expect(readFileSync(stateFile, "utf8")).toBe(state);
+      }
+    } finally { rmSync(root, { recursive: true, force: true }); }
+  });
+  it.skipIf(process.platform !== "win32")("waits for a slow Windows control channel", () => {
+    const root = fixture();
+    const runner = path.join(root, "scripts/windows-runner.mjs");
+    writeFileSync(runner, readFileSync(runner, "utf8").replace('let stopping = false;', 'await new Promise(resolve => setTimeout(resolve, 2200));\nlet stopping = false;'));
+    const run = (action: string) => spawnSync(process.execPath, [path.join(root, "scripts/local-manager.mjs"), action], { cwd: root, encoding: "utf8", timeout: 20000 });
+    try {
+      const started = run("start");
+      expect(started.status, started.stdout + started.stderr).toBe(0);
+      expect(run("status").stdout).toContain("RUNNING");
+    } finally { run("stop"); rmSync(root, { recursive: true, force: true }); }
+  }, 30000);
+  it.skipIf(!["win32", "darwin"].includes(process.platform))("recovers stop and uninstall after installed scripts and package were deleted", () => {
     const root = fixture();
     const external = path.resolve("scripts/windows-installer.mjs");
     const recovery = (action: string, input?: string) => spawnSync(process.execPath, [external, "--" + action], { cwd: root, input, encoding: "utf8", timeout: 20000 });

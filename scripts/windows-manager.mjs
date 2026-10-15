@@ -69,7 +69,12 @@ function pingPipe(pipeName, timeoutMs = 650) {
 }
 
 async function currentState() {
-  const state = readJson(STATE_FILE);
+  let state = {};
+  if (existsSync(STATE_FILE)) {
+    try { state = JSON.parse(readFileSync(STATE_FILE, "utf8")); }
+    catch { fail("Unreadable runtime state. Refusing to guess which process is running."); }
+    if (!state || !Number.isSafeInteger(state.pid) || state.pid <= 0) fail("Invalid runtime state. Refusing a duplicate launch.");
+  }
   const pidAlive = isRunning(Number(state.pid));
   const owned = pidAlive && await pingPipe(state.pipeName);
   return { ...state, running: owned, stale: Boolean(state.pid) && !owned };
@@ -94,6 +99,7 @@ async function startBot() {
     if (botLink()) print(`${color.cyan}${botLink()}${color.reset}`);
     return;
   }
+  if (isRunning(Number(state.pid))) fail("An existing process could not be verified; refusing a duplicate launch.");
   if (!existsSync(ENV_FILE)) fail("Configuration is missing. Run npm run setup:windows first.");
   if (!existsSync(ENTRY_FILE)) fail("Build is missing. Run npm run build first.");
 
@@ -108,12 +114,19 @@ async function startBot() {
     stdio: ["ignore", logFd, logFd],
     env: { ...process.env },
   });
+  let spawnError;
+  child.on("error", error => { spawnError = error; });
   child.unref();
   closeSync(logFd);
   writeJson(STATE_FILE, { pid: child.pid, pipeName, startedAt: new Date().toISOString() });
-  await sleep(1400);
-
-  if (!isRunning(child.pid) || !await pingPipe(pipeName)) {
+  let ready = false;
+  for (let attempt = 0; attempt < 40; attempt++) {
+    await sleep(200);
+    if (spawnError || !isRunning(child.pid)) break;
+    if (await pingPipe(pipeName)) { ready = true; break; }
+  }
+  if (!ready && isRunning(child.pid)) fail("Background process has not responded. Runtime state was preserved; inspect Status and Logs before retrying.");
+  if (!ready) {
     const tail = tailLog(35);
     await rm(STATE_FILE, { force: true });
     fail(`The bot stopped during startup.\n\n${tail}`);
@@ -155,10 +168,12 @@ async function stopBot({ quiet = false } = {}) {
       encoding: "utf8",
     });
   }
-  await rm(STATE_FILE, { force: true });
   if (result.status !== 0 && isRunning(Number(state.pid))) {
     fail(`Could not stop PID ${state.pid}. ${result.stderr || result.stdout || ""}`.trim());
   }
+  for (let attempt = 0; attempt < 20 && isRunning(Number(state.pid)); attempt++) await sleep(100);
+  if (isRunning(Number(state.pid))) fail("Shutdown has not completed. Runtime state preserved.");
+  await rm(STATE_FILE, { force: true });
   if (!quiet) print(`${color.yellow}${color.bold}STOPPED${color.reset} · local data preserved`);
 }
 

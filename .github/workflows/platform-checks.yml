@@ -11,14 +11,22 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [windows-latest, ubuntu-24.04, macos-15, macos-15-intel]
+        os: [windows-latest, windows-2022, ubuntu-22.04, ubuntu-24.04, macos-15, macos-15-intel]
+        node: ['22']
+        include:
+          - os: windows-latest
+            node: '24'
+          - os: ubuntu-24.04
+            node: '24'
+          - os: macos-15
+            node: '24'
     runs-on: ${{ matrix.os }}
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: '22'
+          node-version: ${{ matrix.node }}
           cache: npm
       - run: npm ci
       - run: npm run check

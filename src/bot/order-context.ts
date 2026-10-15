@@ -23,16 +23,16 @@ export async function orderBalances(gateway: ExchangeGateway, pair: PairConfig):
       // Ledger balances always use 18 decimals, independently of order quantity scales.
       return `${escapeHtml(symbol)}: <b>${numberText(scaledToDecimal(balance?.available ?? "0", 18), 18)}</b>`;
     });
-    return `<b>Available to trade</b>\n${values.join(" · ")}`;
+    return `\n<blockquote><b>Available balance</b>\n${values.join("\n")}</blockquote>\n`;
   } catch {
-    return `<b>Available to trade</b>\n${escapeHtml(pair.baseAsset)}: unavailable · ${escapeHtml(pair.quoteAsset)}: unavailable`;
+    return `\n<blockquote><b>Available balance</b>\n${escapeHtml(pair.baseAsset)}: unavailable\n${escapeHtml(pair.quoteAsset)}: unavailable</blockquote>\n`;
   }
 }
 
 export function orderMinimums(pair: PairConfig, quoteBudget = false): string {
   return [
-    `Polyester minimum order value: <b>${escapeHtml(pair.minNotionalQuote)} ${escapeHtml(pair.quoteAsset)}</b>.`,
-    `Minimum quantity: ${escapeHtml(pair.minQtyBase)} ${escapeHtml(pair.baseAsset)} · Step: ${escapeHtml(pair.stepSize)}.`,
+    `Polyester minimum: <b>${escapeHtml(pair.minQtyBase)} ${escapeHtml(pair.baseAsset)} / ${escapeHtml(pair.minNotionalQuote)} ${escapeHtml(pair.quoteAsset)}</b>.`,
+    `Quantity step: ${escapeHtml(pair.stepSize)} ${escapeHtml(pair.baseAsset)}.`,
     quoteBudget ? "The budget includes quote fees. Allow room above the minimum; Polyester checks the final amount in preview." : ""
   ].filter(Boolean).join("\n");
 }

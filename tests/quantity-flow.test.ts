@@ -28,8 +28,15 @@ describe("quantity input end to end through Telegram handlers", () => {
     });
     database.saveWizard(1, 1, { flow: "order", step: "size", data: { symbolId: 1, symbol: "HYPE-USDT", side: "BUY", kind: "MARKET_IOC", sizingMode: "base" } });
     try {
-      await bot.handleUpdate({ update_id: 1, callback_query: { id: "c1", chat_instance: "1", from: { id: 1, is_bot: false, first_name: "Test" }, data: "order:edit:size", message: { message_id: 100, date: 1, chat: { id: 1, type: "private" }, text: "panel" } } });
-      expect(calls.some(c => c.method === "sendMessage" && (c.payload.reply_markup as { force_reply?: boolean })?.force_reply)).toBe(true);
+      await bot.handleUpdate({ update_id: 0, callback_query: { id: "market", chat_instance: "1", from: { id: 1, is_bot: false, first_name: "Test" }, data: "pairtf:1:5m", message: { message_id: 99, date: 1, chat: { id: 1, type: "private" }, text: "market" } } });
+      const marketCard = calls.find(c => String(c.payload.text).includes("Market overview"));
+      expect(String(marketCard?.payload.text)).toContain("<blockquote><b>Available balance</b>\nHYPE: unavailable\nUSDT: unavailable</blockquote>");
+      expect(String(marketCard?.payload.text)).toContain("Minimum 0.01 HYPE / 5 USDT");
+      await bot.handleUpdate({ update_id: 1, callback_query: { id: "c1", chat_instance: "1", from: { id: 1, is_bot: false, first_name: "Test" }, data: "ordkind:MARKET_IOC", message: { message_id: 100, date: 1, chat: { id: 1, type: "private" }, text: "panel" } } });
+      expect(database.getWizard(1, 1)?.step).toBe("size");
+      expect(calls.some(c => String(c.payload.text).includes("How do you want to define"))).toBe(false);
+      expect(calls.some(c => JSON.stringify(c.payload.reply_markup ?? {}).includes("ordsize:quote"))).toBe(true);
+      expect(calls.some(c => c.method === "sendMessage" && String(c.payload.text).includes("Enter the quantity"))).toBe(true);
       await bot.handleUpdate({ update_id: 2, message: { message_id: 300, date: 1, chat: { id: 1, type: "private" }, from: { id: 1, is_bot: false, first_name: "Test" }, text: "1,25" } });
       expect(database.getWizard(1, 1)?.data.qty).toBe("1.25");
       expect(database.getWizard(1, 1)?.data.maxQuoteDebit).toBeUndefined();
@@ -94,7 +101,7 @@ describe("quantity input end to end through Telegram handlers", () => {
       expect(confirmation).toBeDefined();
       expect(String(confirmation?.payload.text)).toContain("Nothing has been sent yet");
       expect(String(confirmation?.payload.text)).toContain("Fee: Maker <b>0.1%</b> · Taker <b>0.15%</b>");
-      expect(String(confirmation?.payload.text)).toContain("HYPE: <b>1.25</b> · USDT: <b>100</b>");
+      expect(String(confirmation?.payload.text)).toContain("HYPE: <b>1.25</b>\nUSDT: <b>100</b>");
       expect(String(confirmation?.payload.text)).not.toContain("ORDER BOOK");
       expect(String(confirmation?.payload.text)).not.toContain("CHART");
       const rows = (confirmation?.payload.reply_markup as { inline_keyboard: Array<Array<{ text: string; callback_data?: string }>> }).inline_keyboard;
