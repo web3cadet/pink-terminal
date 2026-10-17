@@ -175,10 +175,70 @@ show_disclaimer() {
   say "and withdrawals are not currently supported."
   say ""
   say "  ${GREEN}1)${RESET} I have read this and want to continue"
-  say "  ${RED}2)${RESET} Exit"
+  say "  ${RED}2)${RESET} Exit [bot will be uninstalled; .env backed up]"
+  say "${DIM}Exit removes this installation and local history, not exchange orders or other projects.${RESET}"
   local answer
   choose "Selection" answer 1 2
-  [[ "$answer" == "1" ]] || exit 0
+  if [[ "$answer" != "1" ]]; then cancel_installation; exit 0; fi
+}
+
+cancel_installation() {
+  local target="$INSTALL_DIR" source="${BASH_SOURCE[0]:-}" source_dir
+  if [[ -n "$source" && "$source" != /dev/fd/* && "$source" != /proc/self/fd/* ]]; then
+    source_dir="$(cd -- "$(dirname -- "$source")" && pwd)"
+    if [[ -f "$source_dir/package.json" && -f "$source_dir/docker-compose.yml" ]]; then target="$source_dir"; fi
+  fi
+  if [[ -f "$target/manage.sh" && -f "$target/package.json" ]]; then
+    bash "$target/manage.sh" uninstall --installer-cancel || die "Cancellation cleanup stopped. No unsafe fallback deletion was attempted."
+  elif [[ ! -e "$target" ]]; then
+    say "Installation cancelled. No bot files were created."
+  else
+    preserve_install_residue "$target" cancel || die "Cannot safely identify this folder. Existing files were not deleted."
+    say "${GREEN}Cancelled · leftover configuration saved outside the removed folder.${RESET}"
+  fi
+  say ""
+  say "${PINK}${BOLD}REINSTALL · RETURN TO YOUR HOME FOLDER${RESET}"
+  say 'Before installing again, run: cd "$HOME"'
+}
+
+# Older uninstalls left only .env and the bundled CI workflow. Preserve both
+# outside the destination; never treat an arbitrary non-Git directory as residue.
+preserve_install_residue() {
+  command -v python3 >/dev/null 2>&1 || return 1
+  python3 - "$1" "${2:-prepare}" <<'PY'
+import os, pathlib, shutil, stat, sys, tempfile
+root = pathlib.Path(sys.argv[1]).absolute()
+home = pathlib.Path.home().resolve()
+if root != root.resolve() or root == home or str(root) in ('/', '/root', '/home', '/opt', '/usr', '/var', '/tmp') or not root.is_dir():
+    raise SystemExit('Refusing a linked, broad or invalid destination.')
+entries = list(root.iterdir())
+if any(p.name not in ('.env', '.github') or p.is_symlink() for p in entries):
+    raise SystemExit('Destination contains unidentified files. Move them out before installing.')
+env = root / '.env'
+if env.exists() and (not env.is_file() or env.stat().st_nlink != 1):
+    raise SystemExit('Refusing linked or non-file configuration.')
+github = root / '.github'
+if github.exists():
+    allowed = {'workflows', 'workflows/platform-checks.yml'}
+    if not github.is_dir() or any(p.is_symlink() or p.relative_to(github).as_posix() not in allowed for p in github.rglob('*')):
+        raise SystemExit('Unrecognized .github contents; nothing was moved.')
+if entries:
+    backup = pathlib.Path(tempfile.mkdtemp(prefix='pink-terminal-backup-', dir=home))
+    os.chmod(backup, 0o700)
+    print('Previous installation backup: ' + str(backup), flush=True)
+    for item in entries:
+        if item.name == '.env':
+            content = item.read_bytes()
+            with os.fdopen(os.open(backup / '.env', os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), 'wb') as output:
+                output.write(content); output.flush(); os.fsync(output.fileno())
+            if (backup / '.env').read_bytes() != content: raise SystemExit('Backup verification failed.')
+            item.unlink()
+        else:
+            shutil.move(str(item), str(backup / item.name))
+if sys.argv[2] == 'cancel':
+    os.chdir(home)
+    root.rmdir()
+PY
 }
 
 as_root() {
@@ -259,9 +319,9 @@ parse_arguments() {
 
 resolve_application() {
   local source_path source_dir
-  source_path="${BASH_SOURCE[0]}"
+  source_path="${BASH_SOURCE[0]:-}"
   source_dir=""
-  if [[ "$source_path" != /dev/fd/* && "$source_path" != /proc/self/fd/* ]]; then
+  if [[ -n "$source_path" && "$source_path" != /dev/fd/* && "$source_path" != /proc/self/fd/* ]]; then
     source_dir="$(cd -- "$(dirname -- "$source_path")" && pwd)"
   fi
 
@@ -278,7 +338,8 @@ resolve_application() {
     say "${CYAN}Updating the existing checkout…${RESET}"
     run_logged "Updating application files" git -C "$INSTALL_DIR" pull --ff-only
   elif [[ -e "$INSTALL_DIR" ]]; then
-    die "Destination already exists and is not a Git checkout: $INSTALL_DIR"
+    preserve_install_residue "$INSTALL_DIR" prepare || die "Destination is not an empty folder or recognized uninstall residue: $INSTALL_DIR"
+    run_logged "Downloading application files" git clone --depth 1 "$REPOSITORY_URL" "$INSTALL_DIR"
   else
     run_logged "Downloading application files" git clone --depth 1 "$REPOSITORY_URL" "$INSTALL_DIR"
   fi

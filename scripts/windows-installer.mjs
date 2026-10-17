@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import { runInstallerCommand } from "./installer-process.mjs";
 import { localPlatform, nodeVersionIsSupported } from "./local-platform.mjs";
 import { stopBeforeInstall } from "./installation-lifecycle.mjs";
+import { planUninstall, removeInstallation, showUninstallResult } from "./uninstall-files.mjs";
 import { retryAccessCheck, replaceApiValues } from "./access-retry.mjs";
 import { withManagementLock } from "./management-lock.mjs";
 import { protectSecretFile, writeSecretFile } from "./secret-file.mjs";
@@ -12,6 +13,7 @@ import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { cp, mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import process from "node:process";
+import os from "node:os";
 import { createInterface } from "node:readline/promises";
 import { fileURLToPath } from "node:url";
 
@@ -140,8 +142,21 @@ async function showDisclaimer() {
   print("Use a dedicated API key with trading and balance permissions only — transfers");
   print("and withdrawals are not currently supported.\n");
   print(`  ${color.green}1)${color.reset} I have read this and want to continue`);
-  print(`  ${color.red}2)${color.reset} Exit`);
-  if (await choose("Selection", 1, 2) !== 1) process.exit(0);
+  print(`  ${color.red}2)${color.reset} Exit [bot will be uninstalled; .env backed up]`);
+  print(`${color.dim}Exit removes this installation and local history, not exchange orders or other projects.${color.reset}`);
+  if (await choose("Selection", 1, 2) !== 1) {
+    const identified = existsSync(path.join(TARGET_DIR, "package.json")) || existsSync(path.join(TARGET_DIR, ".runtime", "install-source.json"));
+    if (identified) {
+      planUninstall(TARGET_DIR);
+      stopBeforeInstall(TARGET_DIR, SOURCE_DIR, run);
+      showUninstallResult(await removeInstallation(TARGET_DIR));
+    } else {
+      print("Installation cancelled. No identified bot installation was found; existing files were not changed.");
+      print("You can run the installer again in this folder.");
+    }
+    return false;
+  }
+  return true;
 }
 
 function assertTargetIsSafe() {
@@ -316,6 +331,8 @@ async function main() {
   if (recoveryActions.length > 1) fail("Choose one recovery action: --stop, --status or --uninstall.");
   if (recoveryActions.length === 1) {
     // Run the packaged manager, not the possibly deleted installed copy.
+    // Release the launcher's cwd handle too; the child still receives TARGET_DIR.
+    if (recoveryActions[0] === "uninstall") process.chdir(os.homedir());
     return run(process.execPath, [path.join(SOURCE_DIR, "scripts", "local-manager.mjs"), recoveryActions[0]], "Recovery management", { inherit: true });
   }
   if (SELF_TEST) return runSelfTest();
@@ -323,7 +340,7 @@ async function main() {
   if (!nodeVersionIsSupported()) fail(`Use Node.js 22.12+, 24.x or 26+. Node 23 and 25 are unsupported by the test toolchain. Detected ${process.versions.node}.`);
 
   banner();
-  if (!VERIFY_INSTALL && !UPDATE_ONLY) await showDisclaimer();
+  if (!VERIFY_INSTALL && !UPDATE_ONLY && !await showDisclaimer()) return;
   progress(5, "Installer accepted");
   assertTargetIsSafe();
   if (!VERIFY_INSTALL) stopBeforeInstall(TARGET_DIR, SOURCE_DIR, run);

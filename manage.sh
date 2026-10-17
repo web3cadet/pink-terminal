@@ -61,19 +61,28 @@ uninstall_bot() {
   command -v python3 >/dev/null 2>&1 || { say "Python 3 is required for safe uninstall."; return 1; }
   python3 "$APP_DIR/scripts/uninstall-linux.py" --check || return 1
   say "Uninstall from: $APP_DIR"
-  say "Permanently deletes bot files, Git checkout, dependencies, local history and logs. Keeps .env and unrelated top-level files."
+  say "Backs up .env in your home folder, then removes the installation folder, Git checkout, local history and logs."
+  say "Unrelated files block removal. Keep personal files outside the installation."
   say "Exchange orders and strategies are NOT cancelled. Close them first if required."
   say "Docker, shared images/cache and the Telegram bot account are NOT removed."
-  printf '%s' "Are you sure? Type DELETE to uninstall (Enter cancels): " >&4
-  IFS= read -r confirmation <&3
-  if [[ "$confirmation" != DELETE ]]; then say "Uninstall cancelled. Nothing changed."; return 0; fi
+  if [[ "${1:-}" != --installer-cancel ]]; then
+    printf '%s' "Are you sure? Type DELETE to uninstall (Enter cancels): " >&4
+    IFS= read -r confirmation <&3
+    if [[ "$confirmation" != DELETE ]]; then say "Uninstall cancelled. Nothing changed."; return 0; fi
+  fi
   compose down || return 1
   python3 "$APP_DIR/scripts/uninstall-linux.py" --delete || return 1
-  say "UNINSTALLED. .env preserved. Local history and logs deleted; no automatic recovery is provided."
+  cd "$HOME"
+  say "${GREEN}${BOLD}UNINSTALLED · Installation folder removed. Configuration backup saved if .env existed.${RESET}"
+  say ""
+  say "${PINK}${BOLD}REINSTALL · RETURN TO YOUR HOME FOLDER${RESET}"
+  say "Your terminal may still point to the deleted folder. Before reinstalling, run:"
+  say '  cd "$HOME"'
+  say "${DIM}For root this opens /root. Then run the installer again.${RESET}"
   exit 0
 }
 
-if [[ "${1:-}" == uninstall ]]; then uninstall_bot; exit $?; fi
+if [[ "${1:-}" == uninstall ]]; then uninstall_bot "${2:-}"; exit $?; fi
 
 update_bot() {
   if [[ ! -d "$APP_DIR/.git" ]]; then
@@ -101,7 +110,7 @@ while true; do
   say "  ${CYAN}5)${RESET} Recent logs"
   say "  ${PINK}6)${RESET} Reconfigure"
   say "  ${PINK}7)${RESET} Update from Git and rebuild"
-  say "  ${RED}8)${RESET} Uninstall (keep .env)"
+  say "  ${RED}8)${RESET} Uninstall (back up .env)"
   say "  ${DIM}0)${RESET} Exit"
   say ""
   printf '%b' "${BOLD}Selection:${RESET} " >&4

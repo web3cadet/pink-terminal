@@ -5,6 +5,9 @@ from pathlib import Path
 import shutil
 import subprocess
 import sys
+import tempfile
+
+NAMES = json.loads(Path(__file__).with_name('uninstall-files.json').read_text())
 
 
 def plan(directory):
@@ -14,17 +17,22 @@ def plan(directory):
     package = root / 'package.json'
     if package.is_symlink() or json.loads(package.read_text())['name'] != 'pink-terminal':
         raise RuntimeError('Not a Pink Terminal installation')
-    names = json.loads((Path(__file__).parent / 'uninstall-files.json').read_text())
+    names = list(NAMES)
     if (root / '.git').exists():
         # install.sh adds executable bits; these alone are not user content changes.
         result = subprocess.run(['git', '-C', str(root), '-c', 'core.fileMode=false', 'status', '--porcelain'], capture_output=True, text=True, check=True)
         if result.stdout.strip():
             raise RuntimeError('Source checkout has local changes or untracked files. Back them up before uninstalling.')
         names.append('.git')
-    targets = [root / name for name in names if (root / name).exists()]
+    names.append('.env')
+    if any(child.name not in names for child in root.iterdir()):
+        raise RuntimeError('Unrelated files found. Move them out before uninstalling; nothing was deleted.')
+    targets = list(root.iterdir())
     for target in targets:
-        if target.name.lower() == '.env' or target.parent != root or target.is_symlink() or target.resolve() != target:
+        if target.parent != root or target.is_symlink() or target.resolve() != target:
             raise RuntimeError('Refusing linked or out-of-folder target')
+        if target.name == '.env' and (not target.is_file() or target.stat().st_nlink != 1):
+            raise RuntimeError('Configuration must be an ordinary unlinked file')
         if target.is_dir():
             def denied(error):
                 raise error
@@ -34,16 +42,46 @@ def plan(directory):
     return targets
 
 
+def remove(directory, backup_home=None):
+    root = Path(directory).absolute()
+    targets = plan(root)
+    home = Path(backup_home or Path.home()).resolve()
+    if home == root or root in home.parents:
+        raise RuntimeError('Backup must be outside the installation')
+    env = root / '.env'
+    if env.exists():
+        content = env.read_bytes()
+        backup_dir = Path(tempfile.mkdtemp(prefix='pink-terminal-backup-', dir=home))
+        os.chmod(backup_dir, 0o700)
+        backup = backup_dir / '.env'
+        descriptor = os.open(backup, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        with os.fdopen(descriptor, 'wb') as output:
+            output.write(content)
+            output.flush()
+            os.fsync(output.fileno())
+        if backup.read_bytes() != content:
+            raise RuntimeError('Configuration backup verification failed; nothing was deleted')
+        print(f'Configuration backup: {backup}', flush=True)
+    plan(root)
+    if env.exists() and env.read_bytes() != content:
+        raise RuntimeError('Configuration changed during backup; deletion cancelled')
+    os.chdir(home)
+    for target in targets:
+        if target.is_dir():
+            shutil.rmtree(target)
+        else:
+            target.unlink()
+    root.rmdir()
+    print('Installation folder removed.', flush=True)
+
+
 if __name__ == '__main__':
     try:
-        targets = plan(os.getcwd())
         if sys.argv[1:] == ['--delete']:
-            for target in targets:
-                if target.is_dir():
-                    shutil.rmtree(target)
-                else:
-                    target.unlink()
-        elif sys.argv[1:] != ['--check']:
+            remove(os.getcwd())
+        elif sys.argv[1:] == ['--check']:
+            plan(os.getcwd())
+        else:
             raise RuntimeError('Use --check or --delete via manage.sh')
     except Exception as error:
         print(f'Uninstall stopped: {error}', file=sys.stderr)

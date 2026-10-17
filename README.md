@@ -48,7 +48,9 @@ npx --yes github:web3cadet/pink-terminal --stop
 npx --yes github:web3cadet/pink-terminal --uninstall
 ```
 
-Run only the action you need. These commands load management code from the downloaded package, without reinstalling the bot or requesting credentials. Uninstall asks you to type `DELETE`; it preserves `.env` and unrelated top-level files. When `package.json` is missing, a valid installation marker is required and only `.runtime` and `data` are removed. Local history and logs are permanently deleted. Exchange orders and strategies are not cancelled.
+Run only the action you need. These commands load management code from the downloaded package, without reinstalling the bot or requesting credentials. Uninstall asks you to type `DELETE`. It saves and verifies `.env` in a unique `pink-terminal-backup-*` folder inside your home directory, then removes the installation folder. Unrelated top-level files block deletion. When `package.json` is missing, a valid installation marker is required and only recognized runtime residue is eligible. Local history and logs are permanently deleted. Exchange orders and strategies are not cancelled. The final notice reminds you to leave the deleted working directory before reinstalling; on Ubuntu run `cd "$HOME"` (for root, this is `/root`). If Windows keeps the folder locked, cleanup reports that the folder remains rather than claiming it was removed.
+
+Choosing Exit on the first installer disclaimer uninstalls an identified existing copy with the same backup policy. The menu labels this explicitly. A fresh cancellation creates no application files. The Ubuntu bootstrap can recover an empty destination or old `.env`/bundled CI residue: it saves leftovers outside the destination before cloning again, without deleting unrelated files. If no management scripts remain, this is residue recovery, not proof that a manually deleted bot process has stopped; use the supported uninstall path before deleting files.
 
 Keep `.runtime` until the bot has stopped: it contains the process-control information. If that information is also missing or cannot be verified, recovery must not guess which process to terminate. Use operating-system process tools to identify the instance instead.
 
@@ -90,7 +92,7 @@ Replacing the API credentials, endpoint, subaccount or trading mode invalidates 
 
 If the API access check fails, the installer stays open: press Enter to recheck after updating permissions, or choose 2 to replace only the API Key ID and private seed. Telegram settings are kept. Signature errors are shown separately from permission errors. Transfers and withdrawals are listed as recommended None settings, not as verified permissions. The trading check uses an order preview and places no order.
 
-Use `npm run bot:uninstall` for confirmed removal of a local installed copy, keeping `.env`. The command deletes local history and logs but does not cancel exchange orders or strategies. It refuses source Git checkouts.
+Use `npm run bot:uninstall` for confirmed removal of a local installed copy, backing up `.env` outside the removed folder. The command deletes local history and logs but does not cancel exchange orders or strategies. It refuses source Git checkouts and unrelated top-level files.
 
 ## What is implemented
 

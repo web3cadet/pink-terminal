@@ -3,6 +3,8 @@ import os
 import re
 import subprocess
 import tempfile
+import sys
+import shutil
 import unittest
 from pathlib import Path
 
@@ -38,6 +40,76 @@ class InstallerUiTest(unittest.TestCase):
         self.assertEqual(len(art), 12)
         self.assertTrue(all(len(line) <= 80 for line in art))
         self.assertIn("██╗███╗   ██╗ █████╗ ██╗", result.stdout)
+
+    def test_old_uninstall_residue_is_backed_up_and_destination_can_be_reused(self):
+        with tempfile.TemporaryDirectory(prefix="pink-residue-") as base:
+            root = Path(base, 'app'); root.mkdir()
+            home = Path(base, 'home'); home.mkdir()
+            (root / '.env').write_text('SYNTHETIC=keep\n')
+            (root / '.github' / 'workflows').mkdir(parents=True)
+            (root / '.github' / 'workflows' / 'platform-checks.yml').write_text('fixture')
+            body = 'python3() { "$TEST_PYTHON" "$@"; }; preserve_install_residue "$TEST_ROOT" prepare'
+            env = {"TEST_ROOT": root.as_posix(), "TEST_PYTHON": Path(sys.executable).as_posix(), "HOME": home.as_posix(), "USERPROFILE": home.as_posix()}
+            result = self.run_script(["preserve_install_residue"], body, env)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertTrue(root.is_dir())
+            self.assertEqual(list(root.iterdir()), [])
+            backups = list(home.glob('pink-terminal-backup-*'))
+            self.assertEqual(len(backups), 1)
+            self.assertEqual((backups[0] / '.env').read_text(), 'SYNTHETIC=keep\n')
+            self.assertTrue((backups[0] / '.github/workflows/platform-checks.yml').exists())
+
+    def test_residue_recovery_refuses_unrelated_files(self):
+        with tempfile.TemporaryDirectory(prefix="pink-residue-") as base:
+            root = Path(base, 'app'); root.mkdir()
+            (root / 'personal.txt').write_text('keep')
+            body = 'python3() { "$TEST_PYTHON" "$@"; }; preserve_install_residue "$TEST_ROOT" cancel'
+            result = self.run_script(["preserve_install_residue"], body, {"TEST_ROOT": root.as_posix(), "TEST_PYTHON": Path(sys.executable).as_posix()})
+            self.assertNotEqual(result.returncode, 0)
+            self.assertEqual((root / 'personal.txt').read_text(), 'keep')
+
+    def test_first_disclaimer_exit_calls_cleanup_not_installation(self):
+        result = self.run_script(["show_disclaimer"], '''
+YELLOW=''
+choose() { answer=2; }
+cancel_installation() { echo CLEANUP; }
+show_disclaimer
+echo MUST_NOT_CONTINUE
+''')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("CLEANUP", result.stdout)
+        self.assertIn("Exit [bot will be uninstalled; .env backed up]", result.stdout)
+        self.assertNotIn("MUST_NOT_CONTINUE", result.stdout)
+
+    def test_real_linux_uninstall_helper_and_manager_notice_in_isolated_folder(self):
+        with tempfile.TemporaryDirectory(prefix="pink-uninstall-flow-") as base:
+            root = Path(base, 'app'); root.mkdir()
+            home = Path(base, 'home'); home.mkdir()
+            (root / 'package.json').write_text('{"name":"pink-terminal"}')
+            (root / '.env').write_text('SYNTHETIC=keep\n')
+            (root / 'scripts').mkdir()
+            project = Path(__file__).resolve().parents[1]
+            for name in ['uninstall-linux.py', 'uninstall-files.json']:
+                shutil.copyfile(project / 'scripts' / name, root / 'scripts' / name)
+            manager = (project / 'manage.sh').read_text(encoding='utf-8')
+            uninstall = re.search(r'^uninstall_bot\(\) \{.*?^\}', manager, re.M | re.S).group(0)
+            body = uninstall + '''
+APP_DIR="$TEST_ROOT"
+YELLOW=''
+python3() { "$TEST_PYTHON" "$@"; }
+compose() { [[ "$*" == down ]] || return 9; }
+cd "$APP_DIR"
+uninstall_bot --installer-cancel
+'''
+            env = {"TEST_ROOT": root.as_posix(), "TEST_PYTHON": Path(sys.executable).as_posix(), "HOME": home.as_posix(), "USERPROFILE": home.as_posix()}
+            result = self.run_script([], body, env)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertFalse(root.exists())
+            self.assertIn('REINSTALL · RETURN TO YOUR HOME FOLDER', result.stdout)
+            self.assertIn('cd "$HOME"', result.stdout)
+            backups = list(home.glob('pink-terminal-backup-*/.env'))
+            self.assertEqual(len(backups), 1)
+            self.assertEqual(backups[0].read_text(), 'SYNTHETIC=keep\n')
 
     def test_apt_policy_is_scoped_after_privilege_boundary_and_cannot_read_input(self):
         result = self.run_script(["install_host_packages"], '''

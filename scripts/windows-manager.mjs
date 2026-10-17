@@ -8,7 +8,7 @@ import path from "node:path";
 import process from "node:process";
 import { createInterface } from "node:readline/promises";
 import { randomBytes } from "node:crypto";
-import { planUninstall, removeInstallation } from "./uninstall-files.mjs";
+import { planUninstall, removeInstallation, showUninstallResult } from "./uninstall-files.mjs";
 import { withManagementLock, runtimeEnvironment } from "./management-lock.mjs";
 import { formatLogs } from "./log-view.mjs";
 import { updateInstallation } from "./update-installation.mjs";
@@ -226,7 +226,7 @@ async function uninstall() {
   const plan = planUninstall(APP_DIR);
   print(`\nUninstall from: ${plan.root}`);
   print("This stops the managed bot and permanently deletes application files, dependencies, local history and logs.");
-  print("The .env file and unrelated top-level files are kept. Do not store personal files inside application directories.");
+  print("The .env file is backed up in your home folder, then the installation folder is removed. Unrelated files block removal.");
   print("Exchange orders and strategies are NOT cancelled. Close them in Telegram or on Polyester first if required.");
   print("Node.js, npm cache and the Telegram bot account are NOT removed.");
   const rl = createInterface({ input: process.stdin, output: process.stdout });
@@ -237,8 +237,7 @@ async function uninstall() {
   const state = await currentState();
   if (state.stale && isRunning(Number(state.pid))) fail("Cannot verify the stored bot process. Resolve its status before uninstalling.");
   await stopBot({ quiet: true });
-  removeInstallation(APP_DIR);
-  print("UNINSTALLED. .env preserved. Local history and logs were deleted; no automatic recovery is provided.");
+  showUninstallResult(await removeInstallation(APP_DIR), print);
   return true;
 }
 
@@ -264,7 +263,7 @@ async function menu() {
     print(`  ${color.cyan}4)${color.reset} Status`);
     print(`  ${color.cyan}5)${color.reset} Recent logs`);
     print(`  ${color.pink}6)${color.reset} Reconfigure credentials`);
-    print(`  ${color.red}7)${color.reset} Uninstall (keep .env)`);
+    print(`  ${color.red}7)${color.reset} Uninstall (back up .env)`);
     print(`  ${color.pink}8)${color.reset} Update from GitHub`);
     print(`  ${color.dim}0)${color.reset} Exit\n`);
     const rl = createInterface({ input: process.stdin, output: process.stdout });

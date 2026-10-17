@@ -123,8 +123,9 @@ describe("local runtimes", () => {
   }, 30000);
   it.skipIf(!["win32", "darwin"].includes(process.platform))("recovers stop and uninstall after installed scripts and package were deleted", async () => {
     const root = fixture();
+    const home = realpathSync(mkdtempSync(path.join(tmpdir(), "Pink Terminal тест runtime home ")));
     const external = path.resolve("scripts/windows-installer.mjs");
-    const recovery = (action: string, input?: string) => spawnSync(process.execPath, [external, "--" + action], { cwd: root, input, encoding: "utf8", timeout: 20000 });
+    const recovery = (action: string, input?: string) => spawnSync(process.execPath, [external, "--" + action], { cwd: root, input, encoding: "utf8", timeout: 20000, env: { ...process.env, HOME: home, USERPROFILE: home } });
     try {
       const start = spawnSync(process.execPath, [path.join(root, "scripts/local-manager.mjs"), "start"], { cwd: root, encoding: "utf8" });
       expect(start.status, start.stderr + start.stdout).toBe(0);
@@ -136,6 +137,10 @@ describe("local runtimes", () => {
       rmSync(path.join(root, "dist"), { recursive: true });
       rmSync(path.join(root, "package.json"));
       expect(recovery("status").stdout).toContain("RUNNING");
+      expect(recovery("uninstall", "DELETE\n").stdout).toContain("unrelated files");
+      expect(recovery("status").stdout).toContain("RUNNING");
+      copyFileSync(path.join(root, "personal.txt"), path.join(home, "personal.txt"));
+      rmSync(path.join(root, "personal.txt"));
       expect(recovery("uninstall", "NO\n").stdout).toContain("cancelled");
       expect(recovery("status").stdout).toContain("RUNNING");
       const stop = recovery("stop");
@@ -145,9 +150,12 @@ describe("local runtimes", () => {
       expect(removed.status, removed.stdout + removed.stderr).toBe(0);
       expect(existsSync(path.join(root, ".runtime"))).toBe(false);
       expect(existsSync(path.join(root, "data"))).toBe(false);
-      expect(readFileSync(path.join(root, ".env"), "utf8")).toContain("TEST_FIXTURE_ONLY");
-      expect(readFileSync(path.join(root, "personal.txt"), "utf8")).toBe("keep");
-    } finally { recovery("stop"); await cleanupFixture(root); }
+      expect(existsSync(root)).toBe(false);
+      const backup = readdirSync(home).find(name => name.startsWith("pink-terminal-backup-"));
+      expect(backup).toBeTruthy();
+      expect(readFileSync(path.join(home, backup!, ".env"), "utf8")).toContain("TEST_FIXTURE_ONLY");
+      expect(readFileSync(path.join(home, "personal.txt"), "utf8")).toBe("keep");
+    } finally { if (existsSync(root)) recovery("stop"); await cleanupFixture(root); await cleanupFixture(home); }
   }, 30000);
   it("routes Windows to the existing manager and Mac to its beta manager", async () => {
     const { localPlatform } = await moduleAt("local-platform.mjs");
