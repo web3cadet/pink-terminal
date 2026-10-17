@@ -16,6 +16,10 @@ The project talks directly to Polyester's documented ConnectRPC JSON interface. 
 
 `install.sh` provides a terminal setup wizard that installs the host prerequisites, obtains the repository, validates the Telegram token, stores secrets in a local mode-`600` `.env`, builds the isolated Docker runtime, checks authenticated Polyester reads and a non-mutating live order preview, and waits for the Telegram bot to reach its started state.
 
+New configurations use LIVE testnet mode without a mode-selection menu. Keeping an existing configuration preserves its mode. Package and build output is replaced by a compact activity indicator in interactive terminals; private diagnostic logs are retained at the path printed by the installer. After startup, the installer retrieves the bot's public Telegram link from Telegram using the running container's configuration. A link lookup failure does not stop an already running bot.
+
+Package installation uses noninteractive debconf and needrestart's list-only mode for that invocation, without changing global Ubuntu settings. Existing modified configuration files are preserved when dpkg has no default action. The installer does not approve needrestart's service restart menu or reboot the VPS; a pending Ubuntu reboot marker produces a separate system notice. Package maintainer scripts may still start or restart the services of the packages being installed, and the installer explicitly starts Docker.
+
 When working from an existing local checkout, run the wizard from the project directory:
 
 ```bash

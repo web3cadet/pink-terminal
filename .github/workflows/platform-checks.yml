@@ -40,5 +40,6 @@ jobs:
           python3 tests/uninstall-linux-test.py
           python3 tests/setup-access-shell-test.py
           python3 tests/docker-ready-shell-test.py
+          python3 tests/installer-ui-shell-test.py
           docker build -t pink-terminal-ci .
           docker run --rm --entrypoint node pink-terminal-ci --check dist/index.js

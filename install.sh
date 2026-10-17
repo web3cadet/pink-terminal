@@ -25,14 +25,23 @@ else
 fi
 
 umask 077
-BUILD_LOG=""
-cleanup() {
-  unset TELEGRAM_TOKEN TELEGRAM_USER_ID API_KEY_ID API_SECRET_HEX SUBACCOUNT_ID
-  if [[ -n "$BUILD_LOG" && -f "$BUILD_LOG" ]]; then
-    rm -f -- "$BUILD_LOG"
+INSTALL_LOG_DIR=""
+SPINNER_PID=""
+stop_spinner() {
+  if [[ -n "$SPINNER_PID" ]]; then
+    kill "$SPINNER_PID" 2>/dev/null || true
+    wait "$SPINNER_PID" 2>/dev/null || true
+    SPINNER_PID=""
+    printf '\r\033[2K' >&4
   fi
 }
+cleanup() {
+  stop_spinner
+  unset TELEGRAM_TOKEN TELEGRAM_USER_ID API_KEY_ID API_SECRET_HEX SUBACCOUNT_ID
+}
 trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 say() { printf '%b\n' "$*" >&4; }
 die() { say "${RED}${BOLD}Error:${RESET} $*"; exit 1; }
@@ -40,14 +49,11 @@ die() { say "${RED}${BOLD}Error:${RESET} $*"; exit 1; }
 banner() {
   printf '\033[2J\033[H' >&4
   say "${PINK}${BOLD}"
-  say '  ██████╗ ██╗███╗   ██╗██╗  ██╗    ████████╗███████╗██████╗ ███╗   ███╗'
-  say '  ██╔══██╗██║████╗  ██║██║ ██╔╝    ╚══██╔══╝██╔════╝██╔══██╗████╗ ████║'
-  say '  ██████╔╝██║██╔██╗ ██║█████╔╝        ██║   █████╗  ██████╔╝██╔████╔██║'
-  say '  ██╔═══╝ ██║██║╚██╗██║██╔═██╗        ██║   ██╔══╝  ██╔══██╗██║╚██╔╝██║'
-  say '  ██║     ██║██║ ╚████║██║  ██╗       ██║   ███████╗██║  ██║██║ ╚═╝ ██║'
-  say '  ╚═╝     ╚═╝╚═╝  ╚═══╝╚═╝  ╚═╝       ╚═╝   ╚══════╝╚═╝  ╚═╝╚═╝     ╚═╝'
+  say '  ╭──────────────────────────────────────╮'
+  say '  │            PINK TERMINAL             │'
+  say '  ╰──────────────────────────────────────╯'
   say "${RESET}"
-  say "${DIM}                     self-hosted · testnet · private${RESET}"
+  say "${DIM}      self-hosted · testnet · private${RESET}"
   say ""
 }
 
@@ -58,7 +64,43 @@ progress() {
   printf -v bar '%*s' "$filled" ''
   bar=${bar// /█}
   printf -v empty_bar '%*s' "$empty" ''
-  say "${GREEN}[${bar}${DIM}${empty_bar}${RESET}${GREEN}] ${percent}%%${RESET}  ${label}"
+  say "${GREEN}[${bar}${DIM}${empty_bar}${RESET}${GREEN}] ${percent}%${RESET}  ${label}"
+}
+
+# Only non-secret package/build commands belong here. Keep diagnostics in private
+# files; never run credential validation through this logger.
+run_logged() {
+  local label="$1" status=0 log
+  shift
+  if [[ -z "$INSTALL_LOG_DIR" ]]; then
+    INSTALL_LOG_DIR="$(mktemp -d "${TMPDIR:-/tmp}/pink-terminal-install.XXXXXX")"
+    chmod 700 "$INSTALL_LOG_DIR"
+  fi
+  log="$(mktemp "$INSTALL_LOG_DIR/step.XXXXXX.log")"
+  chmod 600 "$log"
+  if [[ -t 4 && "${TERM:-dumb}" != dumb ]]; then
+    (
+      local frame
+      while true; do
+        for frame in '·  ' '·· ' '···' ' ··' '  ·'; do
+          printf '\r\033[2K%b%s %s%b' "$PINK" "$frame" "$label" "$RESET" >&4
+          sleep 0.2
+        done
+      done
+    ) &
+    SPINNER_PID=$!
+  else
+    say "$label…"
+  fi
+  if "$@" >"$log" 2>&1; then status=0; else status=$?; fi
+  stop_spinner
+  if (( status == 0 )); then
+    say "${GREEN}✓${RESET} $label"
+  else
+    say "${RED}✗${RESET} $label (exit $status)"
+    say "Diagnostic log: $log"
+  fi
+  return "$status"
 }
 
 read_value() {
@@ -118,6 +160,26 @@ as_root() {
   fi
 }
 
+install_host_packages() {
+  # Scope these policies to this apt invocation, including after sudo. Do not
+  # change system-wide configuration or auto-confirm service/host restarts.
+  as_root env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=l \
+    apt-get -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold \
+    "$@" </dev/null 3<&- 4>&-
+}
+
+show_host_notice() {
+  local reboot_marker="${1:-/var/run/reboot-required}"
+  if [[ -f "$reboot_marker" ]]; then
+    say ""
+    say "${YELLOW}${BOLD}SYSTEM NOTICE · Reboot pending${RESET}"
+    say "Ubuntu reports that system updates require a reboot."
+    say "Installation can continue. Schedule the reboot yourself when convenient."
+    say "${DIM}This installer will not reboot the VPS.${RESET}"
+    say ""
+  fi
+}
+
 ensure_host_tools() {
   if command -v git >/dev/null 2>&1 && command -v curl >/dev/null 2>&1 \
     && command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; then
@@ -131,13 +193,13 @@ ensure_host_tools() {
     sudo -v || die "sudo authorization failed."
   fi
 
-  say "${CYAN}Installing required host packages…${RESET}"
-  as_root apt-get update -y
-  as_root apt-get install -y ca-certificates curl git docker.io
-  if ! as_root apt-get install -y docker-compose-v2; then
-    as_root apt-get install -y docker-compose-plugin
+  run_logged "Updating package index" install_host_packages update -y
+  run_logged "Installing host tools" install_host_packages install -y ca-certificates curl git docker.io
+  if ! run_logged "Installing Docker Compose" install_host_packages install -y docker-compose-v2; then
+    run_logged "Installing Docker Compose plugin" install_host_packages install -y docker-compose-plugin
   fi
-  as_root systemctl enable --now docker
+  say "${DIM}Additional service restarts are deferred; see installation logs.${RESET}"
+  run_logged "Starting Docker" as_root systemctl enable --now docker
 }
 
 parse_arguments() {
@@ -185,11 +247,11 @@ resolve_application() {
 
   if [[ -d "$INSTALL_DIR/.git" ]]; then
     say "${CYAN}Updating the existing checkout…${RESET}"
-    git -C "$INSTALL_DIR" pull --ff-only
+    run_logged "Updating application files" git -C "$INSTALL_DIR" pull --ff-only
   elif [[ -e "$INSTALL_DIR" ]]; then
     die "Destination already exists and is not a Git checkout: $INSTALL_DIR"
   else
-    git clone --depth 1 "$REPOSITORY_URL" "$INSTALL_DIR"
+    run_logged "Downloading application files" git clone --depth 1 "$REPOSITORY_URL" "$INSTALL_DIR"
   fi
   APP_DIR="$INSTALL_DIR"
 }
@@ -229,18 +291,7 @@ collect_configuration() {
     say "${YELLOW}Subaccount ID must be numeric or empty.${RESET}"
   done
 
-  say ""
-  say "${PINK}${BOLD}Trading mode${RESET}"
-  say "  ${GREEN}1)${RESET} LIVE testnet — signed orders and strategies"
-  say "  ${CYAN}2)${RESET} Read-only — account data, no writes"
-  say "  ${CYAN}3)${RESET} Paper — simulated orders"
-  local mode_choice
-  choose "Selection" mode_choice 1 3
-  case "$mode_choice" in
-    1) TRADING_MODE=live ;;
-    2) TRADING_MODE=read_only ;;
-    3) TRADING_MODE=paper ;;
-  esac
+  TRADING_MODE=live
 
   say ""
   say "${BOLD}Configuration summary${RESET}"
@@ -359,30 +410,33 @@ deploy() {
   as_root chmod 700 "$APP_DIR/data"
   chmod +x "$APP_DIR/install.sh" "$APP_DIR/manage.sh"
 
-  BUILD_LOG="$(mktemp)"
-  chmod 600 "$BUILD_LOG"
   progress 55 "Building the isolated runtime"
-  if ! compose build >"$BUILD_LOG" 2>&1; then
-    say "${RED}Docker build failed. Last output:${RESET}"
-    tail -n 80 "$BUILD_LOG" >&4
-    exit 1
-  fi
+  run_logged "Building the isolated runtime" compose build
 
   progress 72 "Validating the Polyester account and API policy"
   check_api_access
 
   progress 88 "Starting the private Telegram instance"
-  : >"$BUILD_LOG"
-  if ! compose up -d >"$BUILD_LOG" 2>&1; then
-    say "${RED}Container startup failed. Last output:${RESET}"
-    tail -n 80 "$BUILD_LOG" >&4
-    exit 1
-  fi
+  run_logged "Starting the Telegram instance" compose up -d
 
   progress 94 "Waiting for Telegram initialization"
   source "$APP_DIR/scripts/docker-ready.sh"
   if ! wait_for_container_ready; then exit 1; fi
   progress 100 "Ready"
+}
+
+show_telegram_link() {
+  local link
+  # Uses the running container's configuration, also when an existing .env was kept.
+  # Never source .env or put the token in command arguments or installer logs.
+  if link="$(compose exec -T bot node dist/tools/telegram-link.js 2>/dev/null)" \
+    && [[ "$link" =~ ^https://t\.me/[A-Za-z0-9_]{5,32}$ ]]; then
+    say "Open your bot: ${CYAN}${link}${RESET}"
+    say "Send ${BOLD}/start${RESET} to begin."
+  else
+    say "Bot is running, but its Telegram link could not be retrieved."
+    say "Open your bot from @BotFather and send ${BOLD}/start${RESET}."
+  fi
 }
 
 main() {
@@ -391,6 +445,7 @@ main() {
   show_disclaimer
   progress 5 "Installer accepted"
   ensure_host_tools
+  show_host_notice
   progress 20 "Docker, Compose, Git and TLS tools available"
   resolve_application
   progress 35 "Application files ready"
@@ -421,7 +476,8 @@ main() {
   deploy
   say ""
   say "${GREEN}${BOLD}✓ Pink Terminal is running.${RESET}"
-  say "Open the bot in Telegram and send ${BOLD}/start${RESET}."
+  show_telegram_link
+  if [[ -n "$INSTALL_LOG_DIR" ]]; then say "${DIM}Installation logs: $INSTALL_LOG_DIR${RESET}"; fi
   say ""
   say "Management menu:"
   say "  ${CYAN}cd \"$APP_DIR\" && ./manage.sh${RESET}"
