@@ -22,11 +22,22 @@ class InstallerUiTest(unittest.TestCase):
                               env={**os.environ, **(env or {})})
 
     def test_full_name_and_single_percent(self):
-        result = self.run_script(["banner", "progress"], 'banner; progress 55 "Building"')
+        result = self.run_script(["banner", "progress"], 'banner; progress 55 "Building"', {"COLUMNS": "140"})
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn("PINK TERMINAL", result.stdout)
+        self.assertIn("██████╗ ██╗███╗   ██╗██╗  ██╗", result.stdout)
+        self.assertIn("██╗███╗   ██╗ █████╗ ██╗", result.stdout)
+        self.assertEqual(sum('█' in line or '╚' in line for line in result.stdout.splitlines()), 7)
+        self.assertNotIn("╭", result.stdout)
         self.assertIn("55%", result.stdout)
         self.assertNotIn("%%", result.stdout)
+
+    def test_narrow_banner_keeps_both_full_words_in_block_letters(self):
+        result = self.run_script(["banner"], 'banner', {"COLUMNS": "80"})
+        self.assertEqual(result.returncode, 0, result.stderr)
+        art = [line for line in result.stdout.splitlines() if '█' in line or '╚' in line]
+        self.assertEqual(len(art), 12)
+        self.assertTrue(all(len(line) <= 80 for line in art))
+        self.assertIn("██╗███╗   ██╗ █████╗ ██╗", result.stdout)
 
     def test_apt_policy_is_scoped_after_privilege_boundary_and_cannot_read_input(self):
         result = self.run_script(["install_host_packages"], '''

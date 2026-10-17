@@ -47,13 +47,42 @@ say() { printf '%b\n' "$*" >&4; }
 die() { say "${RED}${BOLD}Error:${RESET} $*"; exit 1; }
 
 banner() {
+  # Full PINK TERMINAL in the original block-letter style.
+  local -a pink=(
+    '██████╗ ██╗███╗   ██╗██╗  ██╗'
+    '██╔══██╗██║████╗  ██║██║ ██╔╝'
+    '██████╔╝██║██╔██╗ ██║█████╔╝ '
+    '██╔═══╝ ██║██║╚██╗██║██╔═██╗'
+    '██║     ██║██║ ╚████║██║  ██╗'
+    '╚═╝     ╚═╝╚═╝  ╚═══╝╚═╝  ╚═╝'
+  )
+  local -a terminal=(
+    '████████╗███████╗██████╗ ███╗   ███╗██╗███╗   ██╗ █████╗ ██╗     '
+    '╚══██╔══╝██╔════╝██╔══██╗████╗ ████║██║████╗  ██║██╔══██╗██║     '
+    '   ██║   █████╗  ██████╔╝██╔████╔██║██║██╔██╗ ██║███████║██║     '
+    '   ██║   ██╔══╝  ██╔══██╗██║╚██╔╝██║██║██║╚██╗██║██╔══██║██║     '
+    '   ██║   ███████╗██║  ██║██║ ╚═╝ ██║██║██║ ╚████║██║  ██║███████╗'
+    '   ╚═╝   ╚══════╝╚═╝  ╚═╝╚═╝     ╚═╝╚═╝╚═╝  ╚═══╝╚═╝  ╚═╝╚══════╝'
+  )
+  local columns="${COLUMNS:-}" row width=0 line
+  if [[ ! "$columns" =~ ^[0-9]+$ ]]; then columns="$(tput cols 2>/dev/null || printf '80')"; fi
+  [[ "$columns" =~ ^[0-9]+$ ]] || columns=80
+  for row in "${!pink[@]}"; do
+    line="  ${pink[row]}    ${terminal[row]}"
+    (( ${#line} <= width )) || width=${#line}
+  done
   printf '\033[2J\033[H' >&4
   say "${PINK}${BOLD}"
-  say '  ╭──────────────────────────────────────╮'
-  say '  │            PINK TERMINAL             │'
-  say '  ╰──────────────────────────────────────╯'
+  if (( columns >= width )); then
+    for row in "${!pink[@]}"; do say "  ${pink[row]}    ${terminal[row]}"; done
+  else
+    # Preserve the font on narrower SSH terminals instead of wrapping mid-letter.
+    for line in "${pink[@]}"; do say "  $line"; done
+    say ""
+    for line in "${terminal[@]}"; do say "  $line"; done
+  fi
   say "${RESET}"
-  say "${DIM}      self-hosted · testnet · private${RESET}"
+  say "${DIM}                     self-hosted · testnet · private${RESET}"
   say ""
 }
 
