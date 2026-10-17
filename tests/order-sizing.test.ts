@@ -38,8 +38,8 @@ describe("quote-value order sizing", () => {
       const text = formatOrderDraft(draft);
       expect(text).toContain("100 USDT");
       expect(text).toContain(`${draft.qty} BNB`);
-      expect(text).toContain("before Fee");
-      expect(text).toContain(side === "SELL" ? "Fee reduces your proceeds" : "Fee is charged in addition");
+      expect(text).toContain("before fees");
+      expect(text).toContain(side === "SELL" ? "Fees reduce the proceeds" : "Fees are additional");
     });
   }
   it("does not fall back to a last price when the execution side is missing", async () => {

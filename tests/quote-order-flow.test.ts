@@ -83,7 +83,7 @@ describe("quote amount flow: inline navigation and chronological replies", () =>
     it(`${side} ${kind}: explicit units, new replies, frozen quantity and confirmation required`, async () => {
       const f = setup(side, kind);
       await f.callback(`ordkind:${kind}`);
-      expect(String(f.lastPanel().payload.text)).toContain(`Enter the amount in USDT to ${side.toLowerCase()} BNB for`);
+      expect(String(f.lastPanel().payload.text)).toContain(`Enter the ${side === "BUY" ? "purchase" : "sale"} value in <b>USDT</b>`);
       expect(String(f.lastPanel().payload.text)).toContain("BNB: <b>1.4</b>\nUSDT: <b>169.814199</b>");
       await f.input("100");
       if (kind !== "MARKET_IOC") {
@@ -122,7 +122,7 @@ describe("quote amount flow: inline navigation and chronological replies", () =>
     await f.input("100");
     expect(String(f.lastPanel().payload.text)).toContain("Not enough available funds to sell 0.25 BNB");
     expect(String(f.lastPanel().payload.text)).toContain("Entered: <b>100 USDT</b> before Fee");
-    expect(String(f.lastPanel().payload.text)).toContain("Sizing price: <b>400 USDT</b> per BNB");
+    expect(String(f.lastPanel().payload.text)).toContain("Reference price: <b>400 USDT</b> per BNB");
     expect(String(f.lastPanel().payload.text)).toContain("Calculated quantity: <b>0.25 BNB</b>");
     await f.callback("order:edit:size");
     await f.input("20");
@@ -136,7 +136,7 @@ describe("quote amount flow: inline navigation and chronological replies", () =>
     const f = setup("SELL", "MARKET_IOC");
     await f.callback("ordkind:MARKET_IOC");
     await f.callback("ordsize:base");
-    expect(String(f.lastPanel().payload.text)).toContain("Enter the quantity of BNB to sell");
+    expect(String(f.lastPanel().payload.text)).toContain("Enter the <b>BNB</b> quantity to sell");
     await f.input("1,4");
     const intent = f.db.getIntent(f.confirmId().slice("confirm:o:".length))!;
     expect(intent.payload.qty).toBe("1.4");
@@ -166,7 +166,7 @@ describe("quote amount flow: inline navigation and chronological replies", () =>
     await f.callback("ordkind:MARKET_IOC"); await f.input("100");
     const rows = (f.lastPanel().payload.reply_markup as { inline_keyboard: unknown[][] }).inline_keyboard;
     expect(rows.flat()).toHaveLength(3);
-    const skip = f.button("Don't show again");
+    const skip = f.button("Disable future confirmations");
     await f.callback(skip, 2);
     expect(f.db.orderConfirmationEnabled(1, 2, confirmationAccountContext(f.config))).toBe(true);
     await f.callback(skip);
@@ -175,10 +175,10 @@ describe("quote amount flow: inline navigation and chronological replies", () =>
     await f.callback(f.confirmId());
     expect(f.createOrder).toHaveBeenCalledOnce();
     await f.callback("orderpairside:1:BUY"); await f.callback("ordkind:MARKET_IOC");
-    expect(String(f.lastPanel().payload.text)).toContain("Final confirmation is OFF");
+    expect(String(f.lastPanel().payload.text)).toContain("Confirmation OFF");
     await Promise.all([f.input("100"), f.input("100")]);
     expect(f.createOrder).toHaveBeenCalledTimes(2); // One first order + one immediate order, not two.
-    expect(String(f.lastPanel().payload.text)).toContain("Order admitted");
+    expect(String(f.lastPanel().payload.text)).toContain("Order accepted");
     await f.callback("security:confirmation");
     await f.callback(f.button("Enable final confirmation"));
     expect(f.db.orderConfirmationEnabled(1, 1, confirmationAccountContext(f.config))).toBe(true);
@@ -224,7 +224,7 @@ describe("quote amount flow: inline navigation and chronological replies", () =>
   it("rejects stale disable buttons without changing preferences", async () => {
     const f = setup("BUY", "MARKET_IOC");
     await f.callback("ordkind:MARKET_IOC"); await f.input("100");
-    const skip = f.button("Don't show again");
+    const skip = f.button("Disable future confirmations");
     await vi.advanceTimersByTimeAsync(91_000);
     await f.callback(skip);
     expect(f.db.orderConfirmationEnabled(1, 1, confirmationAccountContext(f.config))).toBe(true);
@@ -238,7 +238,7 @@ describe("quote amount flow: inline navigation and chronological replies", () =>
     await f.input("100");
     expect(f.calls.slice(beforeInput).filter(c => c.method === "sendMessage")).toHaveLength(1);
     expect(f.lastPanel().method).toBe("sendMessage");
-    expect(String(f.lastPanel().payload.text)).toContain("Order admitted");
+    expect(String(f.lastPanel().payload.text)).toContain("Order accepted");
     await f.callback("home");
     expect(f.lastPanel().method).toBe("editMessageText");
     expect(f.lastPanel().payload.message_id).toBe(101);
@@ -262,7 +262,7 @@ describe("configured units and balance percentages through the full order wizard
         f.gateway.listBalances = async () => balances;
         await f.callback(`ordkind:${kind}`);
         const prompt = String(f.lastPanel().payload.text);
-        expect(prompt).toContain(mode === "quote" ? `Enter the amount in ${quote}` : "Enter the quantity of ETH");
+        expect(prompt).toContain(mode === "quote" ? `Enter the ${side === "BUY" ? "purchase" : "sale"} value in <b>${quote}</b>` : "Enter the <b>ETH</b> quantity");
         expect(prompt).toContain(`10%</b> of your available <b>${side === "BUY" ? quote : "ETH"}</b>`);
         await f.input("10%");
         // A later balance change must not turn 10% into a different order.
@@ -343,6 +343,6 @@ describe("configured units and balance percentages through the full order wizard
     await f.callback("safety");
     expect(JSON.stringify(f.lastPanel().payload.reply_markup)).not.toContain("confirmation");
     await f.callback("security:confirmation"); // Old saved panels still navigate safely.
-    expect(String(f.lastPanel().payload.text)).toContain("Final confirmation: OFF");
+    expect(String(f.lastPanel().payload.text)).toContain("Status: OFF");
   });
 });

@@ -8,14 +8,15 @@ import type { TradingService } from "../services/trading.js";
 import { confirmationAccountContext } from "../services/trading.js";
 import { decimalToScaled, scaledToDecimal } from "../utils/decimal.js";
 import { escapeHtml, shorten } from "../utils/html.js";
-import { formatOrderDraft, formatTriggerDraft, mainKeyboard, orderKindCard, orderKindKeyboard, orderOptionsKeyboard, pairsKeyboard, sparkline } from "./ui.js";
+import { formatOrderDraft, formatTriggerDraft, mainKeyboard, orderKindCard, orderKindKeyboard, orderOptionsKeyboard, pairsKeyboard, sparkline, strategyKindLabel } from "./ui.js";
+import { amountPrompt, orderBookTable, orderSettingsCard, strategyPrompt } from "./card-copy.js";
 import { renderOverview } from "./overview.js";
 import { orderBalances, orderMinimums, orderFeeLine } from "./order-context.js";
 import { applyOrderAmountInput, resolveQuoteAmount } from "./order-sizing.js";
 import { assetLink, heading, modeText, numberText, pairLink, pairUrl, positiveInput, terminalHeading, WEBSITE } from "./presentation.js";
 
 const PAGE_SIZE = 8;
-const MARKET_REFRESH_MS = 5_000;
+const MARKET_REFRESH_MS = 1_000;
 const DECIMAL = /^(0|[1-9]\d*)(?:\.\d+)?$/;
 
 export function createTelegramBot(deps: {
@@ -90,21 +91,17 @@ export function createTelegramBot(deps: {
       `${pairLink(pair.symbol)} · ${sell ? "🔴 Sell" : "🟢 Buy"}`,
       await orderBalances(gateway, pair),
       state.data.inputError ? `⚠️ ${escapeHtml(String(state.data.inputError))}\n` : "",
-      state.step === "expiry" ? "Enter the number of minutes until expiry."
+      state.step === "expiry" ? "Enter 1–43,200 minutes from now, or an ISO 8601 timestamp with timezone.\nExample: 60 = expires in 1 hour."
         : state.step === "price" ? `<b>Enter the limit price in ${currency} per ${base}.</b>\nPrice step: ${escapeHtml(pair.tickSize)}.`
         : [
-          quote ? `<b>Enter the amount in ${currency} to ${sell ? "sell" : "buy"} ${base} for.</b>`
-            : `<b>Enter the quantity of ${base} to ${sell ? "sell" : "buy"}.</b>`,
-          quote ? `For example, 100 = ${sell ? "sell" : "buy"} about 100 ${currency} worth of ${base}, before Fee.` : `For example, 1 = 1 ${base}.`,
-          `Or send a percentage, e.g. <b>10%</b> of your available <b>${sell ? base : currency}</b> ${sell ? "to sell" : "to spend"}.`,
-          sell ? "Percentages always sell a share of your token balance, even in quote-value mode." : "For percentages, Fee is included in the budget: 100% uses available funds. For an exact amount, Fee is additional.",
-          "", orderMinimums(pair), "", "Send an amount or percentage in this chat."
+          amountPrompt(pair, state.data as unknown as OrderDraft, quote),
+          "", orderMinimums(pair)
         ].join("\n")
     ].join("\n");
     const keyboard = new InlineKeyboard();
     if (state.step === "size") keyboard.text(quote ? `Enter in ${pair.baseAsset} instead` : `Enter in ${pair.quoteAsset} instead`, quote ? "ordsize:base" : "ordsize:quote").row();
-    keyboard.text("⚙ Optional settings", "ordoptions").row().text("✕ Cancel order", "cancel-flow");
-    if (!confirmationEnabled(ctx)) prompt += "\n\n⚡ <b>Final confirmation is OFF.</b> Completing the required fields submits the order immediately.";
+    keyboard.text("⚙ Order settings", "ordoptions").row().text("✕ Discard order", "cancel-flow");
+    if (!confirmationEnabled(ctx)) prompt += "\n\n⚠ <b>Confirmation OFF:</b> the order is submitted after the last required input.";
     await renderOrderPanel(ctx, state, prompt, keyboard);
     saveFlow(ctx, database, state);
   };
@@ -117,16 +114,16 @@ export function createTelegramBot(deps: {
       const receipt = await trading.confirmOrder(id, ids.chatId, ids.userId);
       logger.info("order_submitted", { mode: config.tradingMode, status: receipt.status });
       result = [
-        receipt.status === "paper" ? "<b>🧪 Paper order accepted</b>" : "<b>✅ Order admitted</b>",
+        receipt.status === "paper" ? "<b>🧪 Paper order accepted</b>" : "<b>✅ Order accepted</b>",
         formatOrderDraft(state.data as unknown as OrderDraft),
-        `Order: <code>${escapeHtml(receipt.orderId ?? "pending")}</code>`,
-        "Admission is not a fill. Check Orders for final state."
+        `Order ID: <code>${escapeHtml(receipt.orderId ?? "pending")}</code>`,
+        receipt.status === "paper" ? "Simulated order. Check Orders for fills." : "Accepted by Polyester. Check Orders for fills."
       ].join("\n");
     } catch (error) {
       logger.warn("order_submission_needs_review", { error: error instanceof Error ? error.message : "unknown" });
-      result = `${terminalHeading("Check order status")}\n\n${escapeHtml(error instanceof Error ? error.message : "Submission could not be confirmed.")}\n\nCheck Orders before trying again. This order will not be retried automatically.`;
+      result = `${terminalHeading("Submission status unknown")}\n\n${escapeHtml(error instanceof Error ? error.message : "Submission could not be confirmed.")}\n\nThe order may have been accepted. Check Orders before trying again. No automatic retry.`;
     }
-    await renderOrderPanel(ctx, state, result, new InlineKeyboard().text("📋 Open orders", "orders:open").row().text("‹ Overview", "home"), true);
+    await renderOrderPanel(ctx, state, result, new InlineKeyboard().text("📋 Open orders", "orders:open").row().text("‹ Terminal", "home"), true);
   };
   const prepareAndShowOrderConfirmation = async (ctx: Context, state: WizardState): Promise<void> => {
     const ids = requireIds(ctx);
@@ -160,15 +157,15 @@ export function createTelegramBot(deps: {
         formatOrderDraft(draft),
         await orderFeeLine(gateway, draft.symbolId),
         "",
-        "<blockquote>✅ <b>Checked by Polyester</b>\nThe order is valid. Nothing has been sent yet.</blockquote>",
-        config.tradingMode === "paper" ? "🧪 <b>PAPER MODE:</b> confirmation creates a simulated order." : "⚠️ <b>Confirm once to submit this live testnet order.</b>",
+        "Nothing submitted yet.",
+        config.tradingMode === "paper" ? "🧪 Confirm to create a simulated order." : "Confirm to submit this testnet order.",
         `Confirmation expires at <code>${new Date(prepared.expiresAt).toISOString()}</code>.`,
-        "<i>Don't show again disables this screen for future orders. This order still needs Confirm.</i>"
+        "<i>Disabling future confirmations does not submit this order.</i>"
       ].join("\n");
       const keyboard = new InlineKeyboard()
         .text(shorten(`✅ Confirm ${side} · ${spend}`, 58), `confirm:o:${prepared.id}`).row()
-        .text("✕ Cancel order", "home").row()
-        .text("Don't show again", `ordskip:${prepared.id}`);
+        .text("✕ Discard order", "home").row()
+        .text("Disable future confirmations", `ordskip:${prepared.id}`);
 
       await renderOrderPanel(ctx, state, confirmationText, keyboard);
       database.clearWizard(ids.chatId, ids.userId);
@@ -180,21 +177,21 @@ export function createTelegramBot(deps: {
       const pair = await gateway.getCatalog().then(catalog => catalog.pairs.find(item => item.symbolId === draft.symbolId)).catch(() => undefined);
       const keyboard = new InlineKeyboard().text("✎ Change amount", "order:edit:size").row();
       if (draft.quoteAmount && pair) keyboard.text(`Enter in ${pair.baseAsset} instead`, "ordsize:base").row();
-      keyboard.text("✕ Cancel order", "cancel-flow");
+      keyboard.text("✕ Discard order", "cancel-flow");
       await renderOrderPanel(ctx, state, [
-        terminalHeading("Order needs attention"),
+        terminalHeading("Order not submitted"),
         pair ? pairLink(pair.symbol) : "",
         pair ? await orderBalances(gateway, pair) : "Balances unavailable",
         "",
         ...(pair && draft.quoteAmount && draft.sizingPrice ? [
           `Entered: <b>${escapeHtml(draft.quoteAmount)} ${escapeHtml(pair.quoteAsset)}</b> ${draft.balancePercent && draft.side === "BUY" ? "including Fee" : "before Fee"}`,
-          `Sizing price: <b>${escapeHtml(draft.sizingPrice)} ${escapeHtml(pair.quoteAsset)}</b> per ${escapeHtml(pair.baseAsset)}`,
+          `Reference price: <b>${escapeHtml(draft.sizingPrice)} ${escapeHtml(pair.quoteAsset)}</b> per ${escapeHtml(pair.baseAsset)}`,
           `Calculated quantity: <b>${escapeHtml(draft.qty ?? "—")} ${escapeHtml(pair.baseAsset)}</b>`,
           ""
         ] : []),
         `⚠️ ${escapeHtml(String(state.data.inputError))}`,
         "",
-        "No order was sent. Change the amount or cancel the order."
+        "No order was sent. Review the details before trying again."
       ].join("\n"), keyboard);
       saveFlow(ctx, database, state);
       return;
@@ -213,8 +210,8 @@ export function createTelegramBot(deps: {
         "",
         formatTriggerDraft(draft),
         "",
-        "<blockquote>✅ <b>Strategy is ready</b>\nNothing has been sent yet. After confirmation, Polyester will monitor and execute it automatically.</blockquote>",
-        config.tradingMode === "paper" ? "🧪 <b>PAPER MODE:</b> activation will be simulated." : "⚠️ <b>Confirm once to activate this live testnet strategy.</b>",
+        "Nothing submitted yet.",
+        config.tradingMode === "paper" ? "🧪 Confirm to simulate activation." : "Confirm to start automatic execution.",
         `Confirmation expires at <code>${new Date(prepared.expiresAt).toISOString()}</code>.`
       ].join("\n"), new InlineKeyboard()
         .text("✅ Confirm & activate", `confirm:t:${prepared.id}`).row()
@@ -343,55 +340,56 @@ export function createTelegramBot(deps: {
     await editOrReply(ctx, [
       terminalHeading("Help"),
       "",
-      "<b>Trading</b> — choose a market and enter an amount or a balance percentage. Set input units and final confirmation in Configuration.",
-      "<b>Strategies</b> — configure the required values and confirm once; accepted strategies then run automatically on Polyester.",
-      "<b>Orders</b> — inspect fill progress or cancel open orders.",
+      "<b>Trading</b> — place market and limit orders.",
+      "<b>Orders</b> — view execution and cancel open orders.",
+      "<b>Strategies</b> — configure automated execution.",
+      "<b>Configuration</b> — set amount units and order confirmation.",
       "",
-      "The bot is self-hosted. API secrets stay in your local <code>.env</code> and must never be sent through Telegram.",
+      "API secrets stay on your host. Never send them through Telegram.",
       "",
-      `<a href="${WEBSITE}">Open Polyester testnet ↗</a>\nUse /cancel to leave any unfinished action.`
+      `/cancel — exit the current setup.\n<a href="${WEBSITE}">Open Polyester testnet ↗</a>`
     ].join("\n"), mainKeyboard(config.tradingMode === "read_only"));
   });
 
   bot.callbackQuery("safety", async (ctx) => {
     await ctx.answerCallbackQuery();
     await editOrReply(ctx, [
-      terminalHeading("Security & mode"), "",
-      config.tradingMode === "live" ? "🟢 <b>LIVE TESTNET</b> · signed trading is enabled"
-        : config.tradingMode === "paper" ? "🧪 <b>PAPER</b> · transactions are simulated"
-        : "🔒 <b>READ ONLY</b> · writes are blocked",
-      `API connection: <b>${config.apiKeyId && config.apiSecretHex ? "connected" : "not configured"}</b>`,
+      terminalHeading("Security"), "",
+      `Mode: <b>${config.tradingMode === "live" ? "Testnet trading" : config.tradingMode === "paper" ? "Local simulation" : "Read-only"}</b>`,
+      `API credentials: <b>${config.apiKeyId && config.apiSecretHex ? "Configured" : "Not configured"}</b>`,
+      "Withdrawals: Not available in this bot",
       "",
-      "This interface has no withdrawal action. Effective permissions are controlled by the policy attached to your Polyester API key."
-    ].join("\n"), new InlineKeyboard().text("‹ Overview", "home"));
+      "Actual API permissions are controlled in Polyester.\nNever send API secrets through Telegram."
+    ].join("\n"), new InlineKeyboard().text("‹ Terminal", "home"));
   });
 
   const showConfiguration = async (ctx: Context) => {
     const ids = requireIds(ctx);
     const mode = database.orderAmountMode(ids.chatId, ids.userId, accountContext);
     await editOrReply(ctx, [terminalHeading("Configuration"), "",
-      `Final confirmation: <b>${confirmationEnabled(ctx) ? "ON" : "OFF · immediate submission"}</b>`,
+      `Order confirmation: <b>${confirmationEnabled(ctx) ? "ON" : "OFF · immediate submission"}</b>`,
       `Amount input: <b>${mode === "base" ? "Token quantity" : "Quote value"}</b>`, "",
-      "<b>Quote value</b> — enter the trade value in the pair's quote currency: USDT, USDC or another asset.",
-      "<b>Token quantity</b> — enter how many base tokens to buy or sell, such as ETH in ETH/USDC.", "",
-      "<b>Percentages work in both modes</b>",
-      "Buy: % of the available payment asset, including Fee. Exact amounts exclude Fee.",
-      "Sell: % of the available token being sold.",
-      "Amounts are fixed when entered; market prices may change before execution."
+      "<b>INPUT MODES</b>",
+      "Quote value — amount in the pair's quote asset (USDT, USDC or another asset).",
+      "Token quantity — amount in the base asset.", "",
+      "<b>PERCENTAGES · BOTH MODES</b>",
+      "Buy — share of available payment asset, including fees.",
+      "Sell — share of available asset being sold.", "",
+      "Exact amounts exclude fees.\nPercentage amounts are calculated when entered; market prices may change."
     ].join("\n"), new InlineKeyboard().text("Order confirmation", "configuration:confirmation").row()
       .text(`${mode === "quote" ? "✓ " : ""}Quote value · USDT / USDC / …`, controlButton(ctx, { kind: "set_amount_mode", targetId: "quote", symbolId: 0 })).row()
       .text(`${mode === "base" ? "✓ " : ""}Token quantity · ETH / BTC / …`, controlButton(ctx, { kind: "set_amount_mode", targetId: "base", symbolId: 0 })).row()
-      .text("‹ Overview", "home"));
+      .text("‹ Terminal", "home"));
   };
   bot.callbackQuery("configuration", async ctx => { await ctx.answerCallbackQuery(); clearFlow(ctx, database); await showConfiguration(ctx); });
 
   const showConfirmationSettings = async (ctx: Context) => {
     const enabled = confirmationEnabled(ctx);
     await editOrReply(ctx, [terminalHeading("Order confirmation"), "",
-      enabled ? "🛡 <b>Final confirmation: ON</b>" : "⚡ <b>Final confirmation: OFF</b>",
-      enabled ? "Review each order and press Confirm to submit it." : "Completing the order fields submits it immediately after validation. There is no final review screen.",
-      "", "This setting applies to your regular orders, not strategies. API validation and access checks remain active.",
-      "Saved for your Telegram user and current API configuration. A different key defaults to confirmation ON."
+      enabled ? "🛡 <b>Status: ON</b>" : "⚡ <b>Status: OFF</b>",
+      enabled ? "Review each order before submitting." : "Orders are submitted after the last required input.",
+      "Strategies still require confirmation.", "",
+      "Saved for your Telegram user and current account configuration.\nA different API key defaults to ON."
     ].join("\n"), new InlineKeyboard().text(enabled ? "Disable final confirmation" : "Enable final confirmation",
       controlButton(ctx, { kind: "set_confirmation", targetId: enabled ? "off" : "on", symbolId: 0 })).row().text("‹ Configuration", "configuration"));
   };
@@ -463,7 +461,7 @@ export function createTelegramBot(deps: {
         const pair = name === "USDT" ? undefined
           : catalog.pairs.find(p => p.baseAsset === name && p.quoteAsset === "USDT")
             ?? catalog.pairs.find(p => p.baseAsset === name || p.quoteAsset === name);
-        return `${assetLink(name, pair?.symbol)}\nAvailable  <b>${numberText(scaledToDecimal(balance.available, 18))}</b>\nTrading  ${numberText(scaledToDecimal(balance.trading, 18))}  ·  Locked  ${numberText(scaledToDecimal(balance.reserved, 18))}\nFunding  ${numberText(scaledToDecimal(balance.funding, 18))}`;
+        return `${assetLink(name, pair?.symbol)}\nTrading total: ${numberText(scaledToDecimal(balance.trading, 18))}\nAvailable: <b>${numberText(scaledToDecimal(balance.available, 18))}</b> · Reserved: ${numberText(scaledToDecimal(balance.reserved, 18))}\nFunding: ${numberText(scaledToDecimal(balance.funding, 18))}`;
       });
     const page = Math.min(Number(ctx.match[1] ?? 0), Math.max(0, Math.ceil(rows.length / 6) - 1));
     const keyboard = new InlineKeyboard();
@@ -483,17 +481,17 @@ export function createTelegramBot(deps: {
     clearFlow(ctx, database);
     const catalog = await gateway.getCatalog();
     saveFlow(ctx, database, { flow: "order", step: "pair", data: {} });
-    await editOrReply(ctx, "<b>New order · 1/5</b>\nChoose a pair:", pairsKeyboard(catalog.pairs, 0, "ordpair", PAGE_SIZE));
+    await editOrReply(ctx, "<b>New order</b>\nChoose a pair:", pairsKeyboard(catalog.pairs, 0, "ordpair", PAGE_SIZE));
   });
   bot.callbackQuery(/^ordpairpage:(\d+)$/, async (ctx) => {
     await ctx.answerCallbackQuery();
     const catalog = await gateway.getCatalog();
-    await editOrReply(ctx, "<b>New order · 1/5</b>\nChoose a pair:", pairsKeyboard(catalog.pairs, Number(ctx.match[1]), "ordpair", PAGE_SIZE));
+    await editOrReply(ctx, "<b>New order</b>\nChoose a pair:", pairsKeyboard(catalog.pairs, Number(ctx.match[1]), "ordpair", PAGE_SIZE));
   });
   bot.callbackQuery(/^ordpair:(\d+)$/, async (ctx) => {
     const pair = requirePair((await gateway.getCatalog()).pairs, Number(ctx.match[1]));
     saveFlow(ctx, database, { flow: "order", step: "side", data: { symbolId: pair.symbolId, symbol: pair.symbol } });
-    await editOrReply(ctx, `${heading("New order · direction")}\n${pairLink(pair.symbol)}\n\n${await balancesForNavigation(ctx, pair)}\n\n<b>What do you want to do?</b>`, new InlineKeyboard().text(`🟢 Buy · ${pair.baseAsset}`, "ordside:BUY").text(`🔴 Sell · ${pair.baseAsset}`, "ordside:SELL").row().text("✕ Cancel order", "cancel-flow"));
+    await editOrReply(ctx, `${heading("New order")}\n${pairLink(pair.symbol)}\n${await balancesForNavigation(ctx, pair)}\n<b>Buy or sell ${escapeHtml(pair.baseAsset)}?</b>`, new InlineKeyboard().text(`🟢 Buy · ${pair.baseAsset}`, "ordside:BUY").text(`🔴 Sell · ${pair.baseAsset}`, "ordside:SELL").row().text("✕ Discard order", "cancel-flow"));
   });
   bot.callbackQuery(/^orderpairside:(\d+):(BUY|SELL)$/, async (ctx) => {
     const pair = requirePair((await gateway.getCatalog()).pairs, Number(ctx.match[1]));
@@ -552,10 +550,15 @@ export function createTelegramBot(deps: {
     await ctx.answerCallbackQuery();
     const state = requireFlow(ctx, database, "order");
     state.step = `risk_${ctx.match[1]}`; saveFlow(ctx, database, state);
-    const prompt = ctx.match[1] === "trail" ? "Send trailing distance in bps (1–10000), optionally followed by activation price. Example: <code>250 90000</code>"
-      : ctx.match[1] === "slippage" ? "Send this order's maximum slippage in bps (1–10000; 100 = 1%):"
-      : `Send ${ctx.match[1] === "tp" ? "take-profit" : "stop-loss"} trigger price:`;
-    await editOrReply(ctx, prompt, new InlineKeyboard().text("‹ Risk controls", "ordoptions"));
+    const pair = requirePair((await gateway.getCatalog()).pairs, Number(state.data.symbolId));
+    const title = ctx.match[1] === "trail" ? "Trailing stop" : ctx.match[1] === "slippage" ? "Max. slippage" : ctx.match[1] === "tp" ? "Take-profit" : "Stop-loss";
+    let prompt = [terminalHeading(title), `${pairLink(pair.symbol)} · ${escapeHtml(String(state.data.side))}`, "",
+      ctx.match[1] === "trail" ? `Enter trailing distance in bps (1–10,000).\n100 bps = 1%. Optionally add an activation price in ${escapeHtml(pair.quoteAsset)}.\nExample: <code>250 90000</code>`
+        : ctx.match[1] === "slippage" ? "Enter maximum slippage in bps (1–10,000).\n100 bps = 1%. Polyester validates the allowed value."
+        : `Enter the trigger price in ${escapeHtml(pair.quoteAsset)} per ${escapeHtml(pair.baseAsset)}.`
+    ].join("\n");
+    if (!confirmationEnabled(ctx)) prompt += "\n\n⚠ <b>Confirmation OFF:</b> the order is submitted after the last required input.";
+    await editOrReply(ctx, prompt, new InlineKeyboard().text("‹ Order settings", "ordoptions"));
   });
   bot.callbackQuery("ordtoggle:post", async (ctx) => {
     await ctx.answerCallbackQuery();
@@ -581,7 +584,7 @@ export function createTelegramBot(deps: {
     const state = requireFlow(ctx, database, "order");
     const draft = state.data as unknown as OrderDraft;
     if (config.tradingMode === "read_only") {
-      await editOrReply(ctx, `${heading("Draft review")}\n${modeText(config.tradingMode)}\n\n${formatOrderDraft(draft)}\n\n<i>Local draft only. Submission is disabled in read-only mode.</i>`, new InlineKeyboard().text("‹ Edit draft", "ticket:refresh").text("Risk controls", "ordoptions").row().text("‹ Overview", "home"));
+      await editOrReply(ctx, `${heading("Draft review")}\n${modeText(config.tradingMode)}\n\n${formatOrderDraft(draft)}\n\n<i>Local draft only. Submission is disabled in read-only mode.</i>`, new InlineKeyboard().text("‹ Edit draft", "ticket:refresh").text("Order settings", "ordoptions").row().text("‹ Terminal", "home"));
       return;
     }
     await prepareAndShowOrderConfirmation(ctx, state);
@@ -604,16 +607,18 @@ export function createTelegramBot(deps: {
     const page = Math.min(Number(ctx.match[2] ?? 0), Math.max(0, Math.ceil(orders.length / 6) - 1));
     const visible = orders.slice(page * 6, (page + 1) * 6);
     const pairMap = new Map(catalog.pairs.map((pair) => [pair.symbolId, pair.symbol]));
-    const lines = visible.map((order, index) => [
-      `${index + 1}. ${pairMap.has(order.symbolId) ? pairLink(pairMap.get(order.symbolId)!) : `#${order.symbolId}`} · ${order.side.includes("BUY") ? "🟢" : "🔴"} ${escapeHtml(order.side)}`,
-      `<b>${escapeHtml(orderStatusLabel(order.status, order.raw.terminalReason))}</b>`,
-      `Filled  <b>${numberText(order.cumulativeQty ?? "0")}</b> / ${numberText(order.totalQty ?? order.qty)}`,
-      `Price  ${numberText(order.price ?? "Market")}`,
-      `ID <code>${escapeHtml(shorten(order.orderId, 16))}</code>`
-    ].join("\n"));
+    const lines = visible.map((order, index) => {
+      const [base = "", quote = ""] = (pairMap.get(order.symbolId) ?? "").split("-");
+      return [
+        `${index + 1}. ${order.side.includes("BUY") ? "🟢 BUY" : "🔴 SELL"} ${pairMap.has(order.symbolId) ? pairLink(pairMap.get(order.symbolId)!) : `#${order.symbolId}`} · ${escapeHtml(orderExecutionLabel(order.orderType, order.timeInForce))}`,
+        `Status: <b>${escapeHtml(orderStatusLabel(order.status, order.raw.terminalReason))}</b>`,
+        `Filled: <b>${numberText(order.cumulativeQty ?? "0")}</b> / ${numberText(order.totalQty ?? order.qty)} ${escapeHtml(base)}`,
+        String(order.orderType).includes("MARKET") ? "Price: Market" : `Limit price: ${numberText(order.price)} ${escapeHtml(quote)}`
+      ].join("\n");
+    });
     const keyboard = new InlineKeyboard();
     for (const [index, order] of visible.entries()) {
-      keyboard.text(`View order · ${index + 1}`, `od:${order.orderId}`);
+      keyboard.text(`Order ${index + 1}`, `od:${order.orderId}`);
       if (mode === "open" && order.clientOrderId && config.tradingMode !== "read_only") keyboard.text("Cancel order", controlButton(ctx, { kind: "cancel_order_prompt", symbolId: order.symbolId, targetId: order.clientOrderId }));
       keyboard.row();
     }
@@ -623,17 +628,14 @@ export function createTelegramBot(deps: {
     if (mode === "open") {
       if (config.tradingMode !== "read_only") keyboard.text("⚠️ Cancel all open orders", "oca:preview").row();
     }
-    keyboard.text(mode === "open" ? "🗂 Order history" : "📋 Open orders", `orders:${mode === "open" ? "history" : "open"}`).row().text("‹ Overview", "home");
-    const explanation = mode === "open"
-      ? "Orders still waiting for a fill. Open one to inspect its executed and remaining amount."
-      : "Filled, cancelled, rejected, and previous orders. Open one to inspect its final status and fills.";
-    await editOrReply(ctx, `${terminalHeading(mode === "open" ? "Open orders" : "Order history")}\n<i>${explanation}</i>\n\n${lines.length ? lines.join("\n\n") : mode === "open" ? "<b>No open orders</b>\nThere is nothing waiting to fill." : "<b>No order history yet</b>\nCompleted, cancelled, or rejected orders will appear here."}`, keyboard);
+    keyboard.text(mode === "open" ? "🗂 Order history" : "📋 Open orders", `orders:${mode === "open" ? "history" : "open"}`).row().text("‹ Terminal", "home");
+    await editOrReply(ctx, `${terminalHeading(mode === "open" ? "Open orders" : "Order history")}\n\n${lines.length ? lines.join("\n\n") : mode === "open" ? "No open orders." : "No order history yet."}`, keyboard);
   });
   bot.callbackQuery(/^od:(.+)$/, async (ctx) => {
     await ctx.answerCallbackQuery({ text: "Loading order details…" });
     const [catalog, details] = await Promise.all([gateway.getCatalog(), gateway.getOrderDetails(ctx.match[1]!)]);
     if (!details) {
-      await editOrReply(ctx, `${terminalHeading("Order details")}\n\nOrder details are not available yet. A recently submitted order may still be syncing. Refresh before submitting another order.`,
+      await editOrReply(ctx, `${terminalHeading("Order details pending")}\n\nRefresh to check the status before submitting another order.`,
         new InlineKeyboard().text("↻ Refresh order", `od:${ctx.match[1]!}`).row().text("‹ Order history", "orders:history"));
       return;
     }
@@ -645,32 +647,29 @@ export function createTelegramBot(deps: {
     const executionLines = details.executions.slice(0, 8).map((execution) => {
       const role = execution.liquidity ? ` · ${escapeHtml(execution.liquidity)}` : "";
       const time = execution.tsNs ? ` · ${escapeHtml(formatTimestamp(execution.tsNs))}` : "";
-      return `• <code>${escapeHtml(execution.qty)} @ ${escapeHtml(execution.price)}</code>${role}${time}`;
+      return `• <code>${escapeHtml(execution.qty)} ${escapeHtml(pair?.baseAsset ?? "")} @ ${escapeHtml(execution.price)} ${escapeHtml(pair?.quoteAsset ?? "")}</code>${role}${time}`;
     });
     const keyboard = new InlineKeyboard().text("↻ Refresh order", `od:${order.orderId}`);
     if (order.clientOrderId && isOrderOpen(order.status) && config.tradingMode !== "read_only") keyboard.text("Cancel order", controlButton(ctx, { kind: "cancel_order_prompt", symbolId: order.symbolId, targetId: order.clientOrderId }));
-    keyboard.row().text("‹ Open orders", "orders:open").text("Order history", "orders:history").row().text("‹ Overview", "home");
+    keyboard.row().text("‹ Open orders", "orders:open").text("Order history", "orders:history").row().text("‹ Terminal", "home");
     await editOrReply(ctx, [
-      heading("Order details"), pair ? pairLink(pair.symbol) : `#${order.symbolId}`,
+      heading("Order details"), `${escapeHtml(order.side.includes("BUY") ? "BUY" : "SELL")} ${pair ? pairLink(pair.symbol) : `#${order.symbolId}`} · ${escapeHtml(orderExecutionLabel(order.orderType, order.timeInForce))}`,
       "",
       `Status: <b>${escapeHtml(orderStatusLabel(order.status, order.raw.terminalReason))}</b>`,
       order.raw.terminalReason ? `Reason: ${escapeHtml(String(order.raw.terminalReason).replaceAll("_", " "))}` : null,
-      `Action: <b>${escapeHtml(order.side.includes("BUY") ? "Buy" : order.side.includes("SELL") ? "Sell" : order.side)}</b>`,
-      `Execution: <b>${escapeHtml(orderExecutionLabel(order.orderType, order.timeInForce))}</b>`,
-      `Price: <code>${escapeHtml(order.price ?? "market")}</code>`,
-      order.averagePrice ? `Average fill: <code>${escapeHtml(order.averagePrice)}</code>` : null,
-      "", "<b>◈ FILL PROGRESS</b>",
-      `Total: <code>${escapeHtml(total ?? "—")}</code>`,
-      `Filled: <code>${escapeHtml(filled)}</code>${total ? ` · <b>${filledPercent(filled, total)}</b>` : ""}`,
-      `Remaining: <code>${escapeHtml(remaining ?? "—")}</code>`,
-      `Execution rows: <code>${details.executionCount}</code>${details.nextPageToken ? "+" : ""}`,
+      String(order.orderType).includes("MARKET") ? "Price: Market" : `Limit price: <code>${escapeHtml(order.price ?? "—")} ${escapeHtml(pair?.quoteAsset ?? "")}</code>`,
+      order.averagePrice ? `Avg. fill price: <code>${escapeHtml(order.averagePrice)} ${escapeHtml(pair?.quoteAsset ?? "")}</code>` : null,
+      "", "<b>◈ EXECUTION</b>",
+      `Quantity: <code>${escapeHtml(total ?? "—")} ${escapeHtml(pair?.baseAsset ?? "")}</code>`,
+      `Filled: <code>${escapeHtml(filled)} ${escapeHtml(pair?.baseAsset ?? "")}</code>${total ? ` · <b>${filledPercent(filled, total)}</b>` : ""}`,
+      `Remaining: <code>${escapeHtml(remaining ?? "—")} ${escapeHtml(pair?.baseAsset ?? "")}</code>`,
+      `Fills: <code>${details.executionCount}</code>${details.nextPageToken ? "+" : ""}`,
       "", executionLines.length ? `<b>Recent fills</b>\n${executionLines.join("\n")}` : null,
-      "", "<b>REFERENCE</b>",
+      "",
       `Order ID: <code>${escapeHtml(order.orderId)}</code>`,
-      order.clientOrderId ? `Client ID: <code>${escapeHtml(order.clientOrderId)}</code>` : null,
       order.createdAt ? `Created: <code>${escapeHtml(formatTimestamp(order.createdAt))}</code>` : null,
       "",
-      "<i>Cumulative quantity is authoritative. Individual execution history can be eventually consistent.</i>"
+      "<i>Recent fills may appear with a delay.</i>"
     ].filter(line => line !== null).join("\n"), keyboard);
   });
   // Old messages have no account/owner/expiry binding. Never execute their writes.
@@ -682,14 +681,14 @@ export function createTelegramBot(deps: {
     await ctx.answerCallbackQuery({ text: "Checking open orders…" });
     const ids = requireIds(ctx);
     database.invalidateControlActions(ids.chatId, ids.userId);
-    const preview = await gateway.cancelAll([], true, randomUUID());
+    await gateway.cancelAll([], true, randomUUID());
     const requestId = randomUUID();
     await editOrReply(ctx, [
-      "<b>⚠️ Cancel every open order?</b>",
+      "<b>⚠️ Cancel all open orders?</b>",
       "",
-      `Polyester dry-run response: <code>${escapeHtml(shorten(JSON.stringify(preview), 900))}</code>`,
+      "This cancels all open orders in the connected account.",
       "",
-      "A fill can still race with cancellation. This confirmation can be used once."
+      "Orders may fill before cancellation completes."
     ].join("\n"), new InlineKeyboard().text("Confirm · cancel all", controlButton(ctx, { kind: "cancel_all", symbolId: 0, targetId: requestId })).row().text("Keep all orders", "orders:open"));
   });
   bot.callbackQuery(/^ctl:([a-f0-9-]{36})$/, async (ctx) => {
@@ -727,7 +726,7 @@ export function createTelegramBot(deps: {
       } catch {
         throw new Error("The update could not be confirmed. Refresh Orders or Strategies to check its final state before trying again.");
       }
-      await ctx.reply("Update submitted. Refresh to confirm final state.", { reply_markup: new InlineKeyboard().text("↻ Refresh", kind === "cancel_order" ? "orders:open" : "triggers:list") });
+      await ctx.reply(kind === "cancel_order" || kind === "cancel_trigger" ? "Cancellation requested. Refresh to confirm the result." : "Update requested. Refresh to confirm the result.", { reply_markup: new InlineKeyboard().text("↻ Refresh", kind === "cancel_order" ? "orders:open" : "triggers:list") });
       return;
     }
     const requestId = targetId;
@@ -735,7 +734,7 @@ export function createTelegramBot(deps: {
     try {
       const result = await gateway.cancelAll([], false, requestId);
       database.rememberStatus(`cancel_all:${requestId}`, `accepted:${JSON.stringify(result)}`);
-      await editOrReply(ctx, `<b>Cancel-all submitted</b>\n<code>${escapeHtml(shorten(JSON.stringify(result), 900))}</code>\n\nRefresh Orders to verify final state.`, new InlineKeyboard().text("↻ Refresh orders", "orders:open").row().text("‹ Overview", "home"));
+      await editOrReply(ctx, "<b>Cancellation requested</b>\n\nRefresh Orders to confirm the result.", new InlineKeyboard().text("↻ Refresh orders", "orders:open").row().text("‹ Terminal", "home"));
     } catch (error) {
       database.rememberStatus(`cancel_all:${requestId}`, `unknown:${error instanceof Error ? error.message : "unknown"}`);
       throw new Error(`Cancel-all outcome is unknown for request ${requestId}. Check open orders before trying again.`);
@@ -752,15 +751,15 @@ export function createTelegramBot(deps: {
     const filtered = triggers.filter(t => mode === "list" ? !/COMPLETED|CANCELED|CANCELLED|FAILED|EXPIRED/.test(t.status) : /COMPLETED|CANCELED|CANCELLED|FAILED|EXPIRED/.test(t.status));
     const page = Math.min(Number(ctx.match[2] ?? 0), Math.max(0, Math.ceil(filtered.length / 6) - 1));
     const visible = filtered.slice(page * 6, page * 6 + 6);
-    const lines = visible.map((trigger, index) => `<b>${index + 1}. ${escapeHtml(trigger.type.replaceAll("_", " "))}</b>\n${pairMap.has(trigger.symbolId) ? pairLink(pairMap.get(trigger.symbolId)!) : `#${trigger.symbolId}`}\nStatus: <b>${escapeHtml(trigger.status.replace(/^STATUS_/, ""))}</b>`);
+    const lines = visible.map((trigger, index) => `<b>${index + 1}. ${strategyKindLabel(trigger.type.replace(/^TRIGGER_TYPE_/, ""))}</b>\n${pairMap.has(trigger.symbolId) ? pairLink(pairMap.get(trigger.symbolId)!) : `#${trigger.symbolId}`}\nStatus: <b>${strategyStatusLabel(trigger.status)}</b>`);
     const keyboard = new InlineKeyboard();
     if (config.tradingMode !== "read_only") keyboard.text("＋ Create strategy", "trigger:new").row();
     visible.forEach((trigger, index) => keyboard.text(`View ${index + 1}`, `td:${trigger.triggerId}`).row());
     if (page > 0) keyboard.text("‹ Previous", `triggers:${mode}:${page - 1}`);
     if ((page + 1) * 6 < filtered.length) keyboard.text("Next ›", `triggers:${mode}:${page + 1}`);
     keyboard.row().text(mode === "list" ? "Strategy history" : "Active strategies", mode === "list" ? "triggers:history" : "triggers:list").row();
-    keyboard.text("↻ Refresh strategies", "triggers:list").row().text("‹ Overview", "home");
-    await editOrReply(ctx, `${terminalHeading("Strategies")}\n\n${lines.length ? lines.join("\n\n") : "<b>No active strategies</b>\nStop-loss, take-profit, trailing stops, TWAP and ladder strategies appear here."}`, keyboard);
+    keyboard.text("↻ Refresh strategies", `triggers:${mode}:${page}`).row().text("‹ Terminal", "home");
+    await editOrReply(ctx, `${terminalHeading(mode === "history" ? "Strategy history" : "Active strategies")}\n\n${lines.length ? lines.join("\n\n") : mode === "history" ? "No strategy history yet." : "No active strategies."}`, keyboard);
   });
   bot.callbackQuery(/^td:(.+)$/, async ctx => {
     await ctx.answerCallbackQuery();
@@ -777,14 +776,17 @@ export function createTelegramBot(deps: {
         .text("Cancel", controlButton(ctx, { kind: "cancel_trigger_prompt", symbolId: trigger.symbolId, targetId: trigger.triggerId })).row();
     }
     keyboard.text("↻ Refresh", `td:${trigger.triggerId}`).row().text("‹ Strategies", "triggers:list");
-    await editOrReply(ctx, [terminalHeading("Strategy status"),
-      `Type: ${escapeHtml(trigger.type)}`, `Status: <b>${escapeHtml(trigger.status.replace(/^STATUS_/, ""))}</b>`,
+    const pair = (await gateway.getCatalog()).pairs.find(item => item.symbolId === trigger.symbolId);
+    await editOrReply(ctx, [terminalHeading("Strategy details"),
+      `${strategyKindLabel(trigger.type.replace(/^TRIGGER_TYPE_/, ""))} · ${pair ? pairLink(pair.symbol) : `#${trigger.symbolId}`}`, "",
+      `Status: <b>${strategyStatusLabel(trigger.status)}</b>`,
       ...(trigger.raw.failureReason || trigger.raw.cancelReason ? [`Reason: ${escapeHtml(String(trigger.raw.failureReason ?? trigger.raw.cancelReason).replace(/^TRIGGER_(?:FAILURE|CANCEL)_REASON_/, "").replaceAll("_", " "))}`] : []),
-      `Child orders: ${children.length}`, `Filled: ${children.filter(o => o.status.includes("FILLED") && !o.status.includes("PARTIAL")).length}`,
+      "", "<b>GENERATED ORDERS · AVAILABLE HISTORY</b>",
+      `Total: ${children.length}`, `Fully filled: ${children.filter(o => o.status.includes("FILLED") && !o.status.includes("PARTIAL")).length}`,
       `Open: ${children.filter(o => isOrderOpen(o.status)).length}`, `Rejected: ${children.filter(o => o.status.includes("REJECT")).length}`,
       ...children.slice(0, 6).map(o => `• ${escapeHtml(o.orderId)}: ${escapeHtml(orderStatusLabel(o.status, o.raw.terminalReason))}`),
-      "", "Completed means the strategy finished scheduling orders — not that every order filled.",
-      !terminal && !children.length ? "No child orders visible yet. The strategy may be waiting for its condition or API processing; this is not a confirmed fill." : "See Order history for execution details."
+      "", "Strategy completion does not mean all orders are filled.",
+      !terminal && !children.length ? "No generated orders visible yet. Check again for updates." : "See Order history for execution details."
     ].join("\n"), keyboard);
   });
   bot.callbackQuery("trigger:new", async (ctx) => {
@@ -815,23 +817,23 @@ export function createTelegramBot(deps: {
     const state = requireFlow(ctx, database, "trigger"); state.data.kind = ctx.match[1];
     if (ctx.match[1] === "TRAILING_STOP") {
       state.data.side = "SELL"; state.data.childKind = "MARKET_IOC"; state.step = "tr_qty"; saveFlow(ctx, database, state);
-      await editOrReply(ctx, "Standalone trailing stop currently supports SELL market execution.\nEnter the asset amount:", new InlineKeyboard().text("✕ Discard strategy", "cancel-flow"));
+      await showStrategyInput(ctx, state, "Total quantity", "Enter the {base} quantity to sell.\nTrailing stop uses market sell execution.");
     } else {
       state.step = "tr_side"; saveFlow(ctx, database, state);
-      await editOrReply(ctx, "Choose the order direction:", new InlineKeyboard().text("🟢 Buy", "trside:BUY").text("🔴 Sell", "trside:SELL").row().text("✕ Discard strategy", "cancel-flow"));
+      await showStrategyInput(ctx, state, "Direction", "Buy or sell {base}?", new InlineKeyboard().text("🟢 Buy", "trside:BUY").text("🔴 Sell", "trside:SELL").row().text("✕ Discard strategy", "cancel-flow"));
     }
   });
   bot.callbackQuery(/^trside:(BUY|SELL)$/, async (ctx) => {
     await ctx.answerCallbackQuery(); const state = requireFlow(ctx, database, "trigger");
     state.data.side = ctx.match[1]; state.step = "tr_qty"; saveFlow(ctx, database, state);
-    await editOrReply(ctx, "Enter the total asset amount:", new InlineKeyboard().text("✕ Discard strategy", "cancel-flow"));
+    await showStrategyInput(ctx, state, "Total quantity", `Enter the total {base} quantity to ${state.data.side === "BUY" ? "buy" : "sell"}${state.data.kind === "TWAP" ? " across all slices" : state.data.kind === "LADDER" ? " across all price levels" : ""}.`);
   });
   bot.callbackQuery(/^trchild:(MARKET_IOC|LIMIT_GTC)$/, async (ctx) => {
     await ctx.answerCallbackQuery(); const state = requireFlow(ctx, database, "trigger");
     state.data.childKind = ctx.match[1];
     if (ctx.match[1] === "LIMIT_GTC") {
       state.step = "tr_child_price"; saveFlow(ctx, database, state);
-      await editOrReply(ctx, "<b>Execution price</b>\nWhen the trigger activates, a limit order will stay open at this price until filled or cancelled.\n\nEnter the limit price:", new InlineKeyboard().text("✕ Discard strategy", "cancel-flow"));
+      await showStrategyInput(ctx, state, "Limit price", "Enter the limit price in {quote} per {base}.\nThe order remains open until filled or cancelled.");
     } else {
       state.step = "ready"; saveFlow(ctx, database, state);
       await prepareAndShowTriggerConfirmation(ctx, state);
@@ -848,17 +850,17 @@ export function createTelegramBot(deps: {
     database.invalidateConfirmations(ids.chatId, ids.userId, "trigger");
     state.step = "tr_qty";
     saveFlow(ctx, database, state);
-    await editOrReply(ctx, "<b>Edit strategy</b>\nEnter the total asset amount. You will then review the strategy settings again.", new InlineKeyboard().text("✕ Discard strategy", "cancel-flow"));
+    await showStrategyInput(ctx, state, "Edit total quantity", "Enter the total {base} quantity.\nYou will review the strategy settings again.");
   });
   bot.callbackQuery(/^confirm:t:([0-9a-f-]+)$/, async (ctx) => {
     await ctx.answerCallbackQuery({ text: "Activating strategy…" });
     const ids = requireIds(ctx); const result = await trading.confirmTrigger(ctx.match[1]!, ids.chatId, ids.userId);
     const triggerId = typeof result.triggerId === "string" || typeof result.triggerId === "number" ? String(result.triggerId) : undefined;
     await editOrReply(ctx, [
-      "<b>✅ Strategy submitted</b>",
+      config.tradingMode === "paper" ? "<b>🧪 Paper strategy accepted</b>" : "<b>✅ Strategy accepted</b>",
       triggerId ? `Strategy ID: <code>${escapeHtml(triggerId)}</code>` : null,
-      "Polyester accepted the strategy. It will now monitor its conditions and execute automatically when they are met.",
-      "Open Strategies to verify its current status."
+      config.tradingMode === "paper" ? "Simulated strategy." : "Accepted by Polyester for automatic execution.",
+      "Open Strategies to check its status and generated orders."
     ].filter(line => line !== null).join("\n"), new InlineKeyboard().text("⚡ View strategies", "triggers:list").row().text("‹ Terminal", "home"));
   });
 
@@ -956,18 +958,16 @@ export async function renderTerminalSnapshot(gateway: ExchangeGateway, config: A
     const bps = market?.change24hBps;
     const marker = bps === null || bps === undefined ? "⚪" : bps > 0 ? "🟢" : bps < 0 ? "🔴" : "⚪";
     const change = bps === null || bps === undefined ? "—" : `${bps > 0 ? "+" : ""}${(bps / 100).toFixed(2)}%`;
-    return `${marker} <b>${escapeHtml(pair.symbol.replace("-", "/"))}</b>\n     $${numberText(market?.lastPrice)}   ·   ${escapeHtml(change)}`;
+    return `${marker} <b>${escapeHtml(pair.symbol.replace("-", " / "))}</b>\n$${numberText(market?.lastPrice)} · 24h ${escapeHtml(change)}`;
   });
 
   const updated = new Date().toISOString().replace("T", " ").slice(0, 19) + " UTC";
   const text = [
     terminalHeading(config.tradingMode === "read_only" ? "Markets" : "Trading"), modeText(config.tradingMode),
-    `<i>Live · auto-updates every ${MARKET_REFRESH_MS / 1000}s · ${escapeHtml(updated)}</i>`,
-    "",
-    `<b>Select a market · ${safePage + 1}/${pages}</b>`,
+    "", "Select a trading pair.", "",
     ...priceLines,
     "",
-    "<i>Open a pair to view its chart, book, and Buy / Sell actions.</i>"
+    `<i>Page ${safePage + 1}/${pages} · Refresh: ${MARKET_REFRESH_MS / 1000}s\nUpdated: ${escapeHtml(updated)}</i>`
   ].join("\n");
 
   const keyboard = new InlineKeyboard();
@@ -1009,11 +1009,11 @@ async function showPair(ctx: Context, gateway: ExchangeGateway, symbolId: number
       loadingTimer = setTimeout(() => resolve(false), 350);
     })]);
   } finally { if (loadingTimer) clearTimeout(loadingTimer); }
-  if (!ready) await editOrReply(ctx, `${heading("Opening market")}\n\nLoading prices and balances…`, new InlineKeyboard().text("‹ Markets", "markets:0").text("‹ Overview", "home"));
+  if (!ready) await editOrReply(ctx, `${heading("Opening market")}\n\nLoading prices and balances…`, new InlineKeyboard().text("‹ Markets", "markets:0").text("‹ Terminal", "home"));
   const [catalog, overview, book, candles, balances] = await data;
   const pair = requirePair(catalog.pairs, symbolId);
   const market = overview.find((item) => item.symbolId === symbolId);
-    const closes = [...candles].sort((a, b) => Number(a.tsSec) - Number(b.tsSec)).map((item) => Number(item.close)).filter(Number.isFinite);
+  const closes = [...candles].sort((a, b) => Number(a.tsSec) - Number(b.tsSec)).map((item) => Number(item.close)).filter(Number.isFinite);
   const bid = book?.bids[0]?.price ?? market?.bestBid ?? "—";
   const ask = book?.asks[0]?.price ?? market?.bestAsk ?? "—";
   const change = market?.change24hBps === null || market?.change24hBps === undefined ? "—" : `${(market.change24hBps / 100).toFixed(2)}%`;
@@ -1021,47 +1021,36 @@ async function showPair(ctx: Context, gateway: ExchangeGateway, symbolId: number
     .text("1m", `pairtf:${symbolId}:1m`).text("5m", `pairtf:${symbolId}:5m`).text("1h", `pairtf:${symbolId}:1h`).text("4h", `pairtf:${symbolId}:4h`).row()
     .text("📚 Order book", `book:${symbolId}:10`).text("↻ Refresh", `pairtf:${symbolId}:${timeframe}`).row()
     .text(`🟢 Buy · ${pair.baseAsset}`, `orderpairside:${symbolId}:BUY`).text(`🔴 Sell · ${pair.baseAsset}`, `orderpairside:${symbolId}:SELL`).row()
-    .text("‹ Markets", "markets:0").text("‹ Overview", "home");
+    .text("‹ Markets", "markets:0").text("‹ Terminal", "home");
   await editOrReply(ctx, [
     heading("Market overview"), pairLink(pair.symbol), "",
-    `<b>${pair.quoteAsset === "USDT" ? "$" : ""}${numberText(market?.lastPrice)} ${escapeHtml(pair.quoteAsset)}</b>`,
-    `24h: <code>${escapeHtml(change)}</code>`,
+    `Last price: <b>${pair.quoteAsset === "USDT" ? "$" : ""}${numberText(market?.lastPrice)} ${escapeHtml(pair.quoteAsset)}</b> · 24h ${escapeHtml(change)}`, "",
+    "<b>▥ MARKET</b>",
+    `Bid: ${numberText(bid)} · Ask: ${numberText(ask)} ${escapeHtml(pair.quoteAsset)}`,
+    `24h low / high: ${numberText(market?.low24h)} / ${numberText(market?.high24h)} ${escapeHtml(pair.quoteAsset)}`,
+    `24h volume: ${numberText(market?.volume24hBase)} ${escapeHtml(pair.baseAsset)}`, "",
+    `<b>💗 CHART · ${escapeHtml(timeframe)}</b>`, closes.length ? `<code>${sparkline(closes)}</code>` : "Chart unavailable · use Refresh to try again",
     balances,
-    "", `<b>◈ CHART · ${escapeHtml(timeframe)}</b>`, closes.length ? `<code>${sparkline(closes)}</code>` : "Chart unavailable · use Refresh to try again", "",
-    "<b>▥ MARKET DATA</b>",
-    `🟢 Bid  ${numberText(bid)}\n🔴 Ask  ${numberText(ask)}`,
-    `24h high  ${numberText(market?.high24h)}\n24h low  ${numberText(market?.low24h)}`,
-    `24h volume  ${numberText(market?.volume24hBase)} ${escapeHtml(pair.baseAsset)}`, "",
-    `<i>Minimum ${numberText(pair.minQtyBase)} ${escapeHtml(pair.baseAsset)} / ${numberText(pair.minNotionalQuote)} ${escapeHtml(pair.quoteAsset)}</i>`
+    `Min. quantity: ${numberText(pair.minQtyBase)} ${escapeHtml(pair.baseAsset)}`,
+    `Min. order value: ${numberText(pair.minNotionalQuote)} ${escapeHtml(pair.quoteAsset)}`
   ].join("\n"), keyboard);
 }
 
 async function showOrderbook(ctx: Context, gateway: ExchangeGateway, symbolId: number, depth: number): Promise<void> {
   const [catalog, book] = await Promise.all([gateway.getCatalog(), gateway.getOrderbook(symbolId, depth)]);
   const pair = requirePair(catalog.pairs, symbolId);
-  const asks = book.asks.slice(0, depth).reverse().map((level) => `${fitBookValue(level.price)} │ ${fitBookValue(level.qty)}`);
-  const bids = book.bids.slice(0, depth).map((level) => `${fitBookValue(level.price)} │ ${fitBookValue(level.qty)}`);
   const body = [
     heading("Order book"), pairLink(pair.symbol),
-    `<i>Snapshot sequence ${escapeHtml(book.bookSeq)}</i>`,
     "",
-    "<pre>       PRICE │          QTY",
-    "─────────────┼─────────────",
-    ...asks.map((row) => `ASK ${escapeHtml(row)}`),
-    "─────────────┼─────────────",
-    ...bids.map((row) => `BID ${escapeHtml(row)}`),
-    "</pre>",
-    `<i>Asks are shown above bids; closest prices are nearest the divider.</i>`
+    `Price (${escapeHtml(pair.quoteAsset)}) │ Quantity (${escapeHtml(pair.baseAsset)})`,
+    orderBookTable(book.asks.slice(0, depth), book.bids.slice(0, depth)),
+    "<i>Asks above · Bids below</i>"
   ].join("\n");
   await editOrReply(ctx, body, new InlineKeyboard()
     .text("5 levels", `book:${symbolId}:5`).text("10 levels", `book:${symbolId}:10`).text("20 levels", `book:${symbolId}:20`).row()
     .text("↻ Refresh book", `book:${symbolId}:${depth}`).row()
     .text(`🟢 Buy · ${pair.baseAsset}`, `orderpairside:${symbolId}:BUY`).text(`🔴 Sell · ${pair.baseAsset}`, `orderpairside:${symbolId}:SELL`).row()
     .text("‹ Pair overview", `pair:${symbolId}`).text("‹ Markets", "markets:0"));
-}
-
-function fitBookValue(value: string): string {
-  return (value.length > 13 ? `${value.slice(0, 12)}…` : value).padStart(13);
 }
 
 function subtractDecimals(left: string, right: string): string {
@@ -1114,12 +1103,21 @@ function orderStatusLabel(status: string, reason?: unknown): string {
 function orderExecutionLabel(orderType?: string, timeInForce?: string): string {
   const type = String(orderType ?? "").toUpperCase();
   const tif = String(timeInForce ?? "").toUpperCase();
-  if (type.includes("MARKET")) return "Market · execute now";
-  if (tif.includes("GTC")) return "Limit · stays open until filled or cancelled";
-  if (tif.includes("GTD")) return "Limit · active until its expiry time";
-  if (tif.includes("FOK")) return "Limit · fill all now or cancel all";
-  if (tif.includes("IOC")) return "Limit · fill available now, cancel the rest";
+  if (type.includes("MARKET")) return "Market";
+  if (tif.includes("GTC")) return "Limit GTC";
+  if (tif.includes("GTD")) return "Limit GTD";
+  if (tif.includes("FOK")) return "Limit FOK";
+  if (tif.includes("IOC")) return "Limit IOC";
   return [orderType, timeInForce].filter(Boolean).join(" / ") || "Not reported";
+}
+
+function strategyStatusLabel(status: string): string {
+  return escapeHtml(status.replace(/^(?:TRIGGER_)?STATUS_/, "").replaceAll("_", " ").toLowerCase().replace(/^./, c => c.toUpperCase()));
+}
+
+async function showStrategyInput(ctx: Context, state: WizardState, title: string, instruction: string, keyboard?: InlineKeyboard): Promise<void> {
+  await editOrReply(ctx, strategyPrompt(state.data as unknown as TriggerDraft, title, instruction),
+    keyboard ?? new InlineKeyboard().text("✕ Discard strategy", "cancel-flow"));
 }
 
 async function handleOrderText(ctx: Context & { message: { text: string }; chat: { id: number }; from: { id: number } }, state: WizardState, text: string, db: AppDatabase): Promise<void> {
@@ -1169,25 +1167,30 @@ async function handleTriggerText(ctx: Context & { message: { text: string }; cha
     else if (state.data.kind === "TWAP") state.step = "tr_duration";
     else state.step = "tr_price_min";
     db.saveWizard(ctx.chat.id, ctx.from.id, state);
-    const prompt = state.step === "tr_trigger_price" ? "Send trigger price:" : state.step === "tr_trailing_bps" ? "Send trailing distance in bps (1–10000):" : state.step === "tr_duration" ? "Send TWAP duration in seconds:" : "Send ladder minimum price:";
-    await ctx.reply(prompt); return false;
+    const prompt = state.step === "tr_trigger_price" ? ["Trigger price", "Enter the trigger price in {quote} per {base}."]
+      : state.step === "tr_trailing_bps" ? ["Trailing distance", "Enter distance in bps (1–10,000).\n100 bps = 1%."]
+      : state.step === "tr_duration" ? ["Duration", "Enter the total execution duration in seconds (1–86,400)."]
+      : ["Lower price", "Enter the lowest order price in {quote} per {base}."];
+    await showStrategyInput(ctx, state, prompt[0]!, prompt[1]!); return false;
   }
   if (state.step === "tr_trigger_price") {
     assertDecimal(text); state.data.triggerPrice = text; state.step = "tr_child"; db.saveWizard(ctx.chat.id, ctx.from.id, state);
     if (state.data.side === "BUY") {
-      await ctx.reply("A conditional Buy uses a limit order. It will remain open until filled or cancelled:", { reply_markup: new InlineKeyboard().text("Set limit execution price", "trchild:LIMIT_GTC") });
+      await showStrategyInput(ctx, state, "Order type", "Conditional buys use limit orders.\nThe order remains open until filled or cancelled.", new InlineKeyboard().text("Set limit price", "trchild:LIMIT_GTC").row().text("✕ Discard strategy", "cancel-flow"));
     } else {
-      await ctx.reply("How should the triggered order execute?", { reply_markup: new InlineKeyboard().text("Market · execute immediately", "trchild:MARKET_IOC").row().text("Limit · stays until filled", "trchild:LIMIT_GTC") });
+      await showStrategyInput(ctx, state, "Order type", "Choose how the triggered order executes.", new InlineKeyboard().text("Market · execute immediately", "trchild:MARKET_IOC").row().text("Limit GTC", "trchild:LIMIT_GTC").row().text("✕ Discard strategy", "cancel-flow"));
     }
     return false;
   }
   if (state.step === "tr_trailing_bps") {
-    state.data.trailingBps = assertInteger(text, 1, 10_000); state.step = "tr_activation"; db.saveWizard(ctx.chat.id, ctx.from.id, state); await ctx.reply("Send activation price, or 0 to activate immediately:"); return false;
+    state.data.trailingBps = assertInteger(text, 1, 10_000); state.step = "tr_activation"; db.saveWizard(ctx.chat.id, ctx.from.id, state);
+    await showStrategyInput(ctx, state, "Activation price", "Enter a price in {quote}, or 0 to start tracking immediately."); return false;
   }
   if (state.step === "tr_activation") {
     if (text !== "0") { assertDecimal(text); state.data.activationPrice = text; }
     else delete state.data.activationPrice;
-    state.step = "tr_trailing_slippage"; db.saveWizard(ctx.chat.id, ctx.from.id, state); await ctx.reply("Send maximum execution slippage in bps (0–10000; 100 = 1%):"); return false;
+    state.step = "tr_trailing_slippage"; db.saveWizard(ctx.chat.id, ctx.from.id, state);
+    await showStrategyInput(ctx, state, "Max. slippage", "Enter maximum slippage in bps (0–10,000).\n100 bps = 1%. Use 0 for the Polyester default.\nPolyester validates the allowed value before activation."); return false;
   }
   if (state.step === "tr_trailing_slippage") {
     const value = assertInteger(text, 0, 10_000);
@@ -1195,14 +1198,15 @@ async function handleTriggerText(ctx: Context & { message: { text: string }; cha
     state.step = "ready"; db.saveWizard(ctx.chat.id, ctx.from.id, state); return true;
   }
   if (state.step === "tr_duration") {
-    state.data.durationMs = assertInteger(text, 1, 86_400) * 1000; state.step = "tr_interval"; db.saveWizard(ctx.chat.id, ctx.from.id, state); await ctx.reply("Send slice interval in seconds:"); return false;
+    state.data.durationMs = assertInteger(text, 1, 86_400) * 1000; state.step = "tr_interval"; db.saveWizard(ctx.chat.id, ctx.from.id, state);
+    await showStrategyInput(ctx, state, "Slice interval", "Enter seconds between orders (1–86,400)."); return false;
   }
   if (state.step === "tr_interval") {
     state.data.sliceIntervalMs = assertInteger(text, 1, 86_400) * 1000; state.step = "tr_child"; db.saveWizard(ctx.chat.id, ctx.from.id, state);
-    await ctx.reply("How should each timed slice execute?", { reply_markup: new InlineKeyboard().text("Market · execute now", "trchild:MARKET_IOC").row().text("Limit · stays until filled", "trchild:LIMIT_GTC") }); return false;
+    await showStrategyInput(ctx, state, "Order type", "Choose how each timed slice executes.", new InlineKeyboard().text("Market · execute now", "trchild:MARKET_IOC").row().text("Limit GTC", "trchild:LIMIT_GTC").row().text("✕ Discard strategy", "cancel-flow")); return false;
   }
-  if (state.step === "tr_price_min") { assertDecimal(text); state.data.priceMin = text; state.step = "tr_price_max"; db.saveWizard(ctx.chat.id, ctx.from.id, state); await ctx.reply("Send ladder maximum price:"); return false; }
-  if (state.step === "tr_price_max") { assertDecimal(text); state.data.priceMax = text; state.step = "tr_levels"; db.saveWizard(ctx.chat.id, ctx.from.id, state); await ctx.reply("Send number of price levels (2–100):"); return false; }
+  if (state.step === "tr_price_min") { assertDecimal(text); state.data.priceMin = text; state.step = "tr_price_max"; db.saveWizard(ctx.chat.id, ctx.from.id, state); await showStrategyInput(ctx, state, "Upper price", "Enter the highest order price in {quote} per {base}."); return false; }
+  if (state.step === "tr_price_max") { assertDecimal(text); state.data.priceMax = text; state.step = "tr_levels"; db.saveWizard(ctx.chat.id, ctx.from.id, state); await showStrategyInput(ctx, state, "Price levels", "Enter the number of orders: 2–100."); return false; }
   if (state.step === "tr_levels") { state.data.levels = assertInteger(text, 2, 100); state.data.childKind = "LIMIT_GTC"; state.data.postOnly = false; state.step = "ready"; db.saveWizard(ctx.chat.id, ctx.from.id, state); return true; }
   if (state.step === "tr_child_price") { assertDecimal(text); state.data.childLimitPrice = text; state.step = "ready"; db.saveWizard(ctx.chat.id, ctx.from.id, state); return true; }
   await ctx.reply("Use the buttons in the current wizard or /cancel.");
@@ -1227,7 +1231,7 @@ async function showOrderKinds(ctx: Context, symbol: string, side?: OrderSide, ba
 
 async function showOrderOptions(ctx: Context, state: WizardState): Promise<void> {
   const draft = state.data as unknown as Partial<OrderDraft>;
-  await editOrReply(ctx, `${heading("Optional settings")}\n\n${formatOrderDraft(draft)}\n\nAdd take-profit, stop-loss or trailing protection if needed.\nChanging settings does not send an order.`, orderOptionsKeyboard(draft));
+  await editOrReply(ctx, orderSettingsCard(draft), orderOptionsKeyboard(draft));
 }
 
 async function editOrReply(ctx: Context, text: string, keyboard: InlineKeyboard): Promise<void> {

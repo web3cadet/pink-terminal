@@ -46,7 +46,7 @@ describe("complete Telegram strategy wizard", () => {
     const f = fixture();
     try {
       await f.callback("od:pending");
-      expect(f.panels.at(-1)?.text).toContain("may still be syncing");
+      expect(f.panels.at(-1)?.text).toContain("Order details pending");
       expect(f.panels.at(-1)?.reply_markup.inline_keyboard.flat()).toContainEqual({ text: "↻ Refresh order", callback_data: "od:pending" });
       expect(f.createTrigger).not.toHaveBeenCalled();
     } finally { f.db.close(); }

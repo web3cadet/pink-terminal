@@ -4,6 +4,33 @@ import type { ExchangeGateway } from "../src/domain.js";
 import type { AppConfig } from "../src/config.js";
 import { AppDatabase } from "../src/storage/database.js";
 
+it("selects the five highest-value balances, including funding but not counting reserves twice", async () => {
+  const names = ["SMALL", "FUNDED", "RESERVED", "FOUR", "THREE", "TWO", "UNKNOWN"];
+  const unit = 10n ** 18n;
+  const gateway = {
+    getCatalog: async () => ({
+      assets: names.map((asset, ledgerId) => ({ asset, ledgerId })),
+      pairs: names.slice(0, -1).map((baseAsset, symbolId) => ({ symbolId, symbol: `${baseAsset}-USDT`, baseAsset, quoteAsset: "USDT" }))
+    }),
+    listBalances: async () => [1, 1, 5, 4, 3, 2, 1000].map((amount, assetId) => ({
+      assetId, trading: String(BigInt(amount) * unit), funding: String(assetId === 1 ? 5n * unit : 0n),
+      available: String(assetId === 2 ? 0n : BigInt(amount) * unit), reserved: String(assetId === 2 ? 5n * unit : 0n)
+    })),
+    listMarketOverview: async () => names.slice(0, -1).map((_, symbolId) => ({ symbolId, lastPrice: "1" })),
+    listOpenOrders: async () => []
+  } as unknown as ExchangeGateway;
+  const text = await renderOverview(gateway, { tradingMode: "live" } as AppConfig);
+  const balances = text.slice(text.indexOf("<b>◉ TOP BALANCES</b>"));
+  const expected = ["FUNDED", "RESERVED", "FOUR", "THREE", "TWO"];
+  expected.forEach((name, index) => {
+    expect(balances).toContain(`<b>${name}</b>`);
+    if (index) expect(balances.indexOf(`<b>${name}</b>`)).toBeGreaterThan(balances.indexOf(`<b>${expected[index - 1]}</b>`));
+  });
+  expect(balances).not.toContain("<b>SMALL</b>");
+  expect(balances).not.toContain("<b>UNKNOWN</b>");
+  expect(balances).toContain("2 more in Balances");
+});
+
 it("does not present a USDT-only subtotal as portfolio value when prices fail", async () => {
   const gateway = {
     getCatalog: async () => ({ assets: [{ ledgerId: 1, asset: "USDT" }, { ledgerId: 2, asset: "ETC" }], pairs: [] }),
@@ -50,7 +77,8 @@ it("values trading plus funding without double-counting reserved funds and never
   expect(text).toContain("Open orders: <b>1</b>");
   expect(text).toContain("12.34 USDT");
   expect(text).toContain("<b>◈ PORTFOLIO</b>");
-  expect(text).toContain("Volume: <b>12.34 USDT</b> <i>(filled via bot)</i>");
+  expect(text).toContain("Bot trading volume: <b>12.34 USDT</b>");
+  expect(text).not.toContain("filled via bot");
   expect(text).toMatch(/^💗 𝗣𝗜𝗡𝗞 𝗧𝗘𝗥𝗠𝗜𝗡𝗔𝗟\n\nfor Polyester testnet\n🟢 Status: online\n/);
   expect(text).not.toContain("<b>Terminal</b>");
   expect(text).not.toContain("𝙋𝙄𝙉𝙆");
@@ -63,7 +91,9 @@ it("values trading plus funding without double-counting reserved funds and never
   expect(text).not.toContain("cost basis unavailable");
   expect(text).toContain("\n\n");
   const balancesSection = text.slice(text.indexOf("<b>◉ TOP BALANCES</b>"));
+  expect(balancesSection.indexOf("<b>ETH</b>")).toBeLessThan(balancesSection.indexOf("<b>USDT</b>"));
   expect(balancesSection.indexOf("<b>USDT</b>")).toBeLessThan(balancesSection.indexOf("<b>USDC</b> ↗"));
+  expect(balancesSection.indexOf("<b>USDC</b>")).toBeLessThan(balancesSection.indexOf("<b>MYST</b>"));
   expect(balancesSection).not.toContain("USDC / USDT");
   database.close();
 });

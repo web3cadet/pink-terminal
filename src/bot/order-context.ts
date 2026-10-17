@@ -31,7 +31,8 @@ export async function orderBalances(gateway: ExchangeGateway, pair: PairConfig):
 
 export function orderMinimums(pair: PairConfig, quoteBudget = false): string {
   return [
-    `Polyester minimum: <b>${escapeHtml(pair.minQtyBase)} ${escapeHtml(pair.baseAsset)} / ${escapeHtml(pair.minNotionalQuote)} ${escapeHtml(pair.quoteAsset)}</b>.`,
+    `Min. quantity: <b>${escapeHtml(pair.minQtyBase)} ${escapeHtml(pair.baseAsset)}</b>`,
+    `Min. order value: <b>${escapeHtml(pair.minNotionalQuote)} ${escapeHtml(pair.quoteAsset)}</b>`,
     `Quantity step: ${escapeHtml(pair.stepSize)} ${escapeHtml(pair.baseAsset)}.`,
     quoteBudget ? "The budget includes quote fees. Allow room above the minimum; Polyester checks the final amount in preview." : ""
   ].filter(Boolean).join("\n");

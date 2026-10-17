@@ -8,13 +8,16 @@ import type { TradingService } from "../src/services/trading.js";
 
 function deferred() { let resolve!: () => void; const promise = new Promise<void>(r => { resolve = r; }); return { promise, resolve }; }
 describe("single-click navigation during live updates", () => {
-  it.each(["snapshot", "edit", "slow data", "unchanged", "fast data", "slow acknowledgement", "expired acknowledgement", "cached buy balance", "cached sell balance", "slow buy balance", "slow sell balance", "duplicate buy", "duplicate sell", "wizard buy", "wizard sell", "navigation order"])("handles %s without needing a second click", async stage => {
+  it.each(["real chart", "one-second refresh", "snapshot", "edit", "slow data", "unchanged", "fast data", "slow acknowledgement", "expired acknowledgement", "cached buy balance", "cached sell balance", "slow buy balance", "slow sell balance", "duplicate buy", "duplicate sell", "wizard buy", "wizard sell", "navigation order"])("handles %s without needing a second click", async stage => {
     vi.useFakeTimers();
     const db = new AppDatabase(":memory:");
     const gate = deferred(), entered = deferred();
     let delayNext = false;
     const overview = [{ symbolId: 1, lastPrice: "500", bestAsk: "500", bestBid: "499", change24hBps: 100 }];
-    const getCandles = vi.fn(async () => { if (stage === "slow data") { entered.resolve(); await gate.promise; } return []; });
+    const getCandles = vi.fn(async (_symbolId: number, timeframe: string, _count: number) => {
+      if (stage === "slow data") { entered.resolve(); await gate.promise; }
+      return stage === "real chart" ? [3, 1, 4, 2].map(tsSec => ({ tsSec: String(tsSec), close: String(timeframe === "5m" ? 5 - tsSec : tsSec) })) : [];
+    });
     const listBalances = vi.fn(async () => {
       if (delayNext && /balance|duplicate/.test(stage)) { entered.resolve(); await gate.promise; }
       return [];
@@ -45,6 +48,25 @@ describe("single-click navigation during live updates", () => {
     const click = (data: string) => bot.handleUpdate({ update_id: ++updateId, callback_query: { id: String(updateId), chat_instance: "1", from: { id: 1, is_bot: false, first_name: "Test" }, data, message: { message_id: 100, date: 1, chat: { id: 1, type: "private" }, text: "panel" } } });
     try {
       await click("markets:0");
+      if (stage === "real chart") {
+        for (const timeframe of ["1m", "5m", "1h", "4h"]) {
+          await click(`pairtf:1:${timeframe}`);
+          expect(getCandles).toHaveBeenLastCalledWith(1, timeframe, 32);
+          expect(applied.at(-1)).toContain(`💗 CHART · ${timeframe}`);
+          expect(applied.at(-1)).toContain(timeframe === "5m" ? "█▆▃▁" : "▁▃▆█");
+        }
+        return;
+      }
+      if (stage === "one-second refresh") {
+        expect(applied[0]).toContain("Refresh: 1s");
+        overview[0]!.lastPrice = "501";
+        await vi.advanceTimersByTimeAsync(999);
+        expect(applied).toHaveLength(1);
+        await vi.advanceTimersByTimeAsync(1);
+        expect(applied).toHaveLength(2);
+        expect(applied.at(-1)).toContain("$501");
+        return;
+      }
       if (stage === "navigation order") {
         delayNext = true;
         const pair = click("pair:1");
@@ -52,15 +74,15 @@ describe("single-click navigation during live updates", () => {
         const side = click("orderpairside:1:SELL");
         await vi.advanceTimersByTimeAsync(0);
         gate.resolve(); await Promise.all([pair, side]);
-        expect(applied.at(-1)).toContain("New order · execution");
+        expect(applied.at(-1)).toContain("Order type");
         expect(db.getWizard(1, 1)?.data.side).toBe("SELL");
         return;
       }
       if (stage.startsWith("wizard")) {
         await click("ordpair:1");
-        expect(applied.at(-1)).toContain("New order · direction");
+        expect(applied.at(-1)).toContain("New order");
         await click(`ordside:${stage.endsWith("buy") ? "BUY" : "SELL"}`);
-        expect(applied.at(-1)).toContain("New order · execution");
+        expect(applied.at(-1)).toContain("Order type");
         expect(listBalances).toHaveBeenCalledOnce();
         return;
       }
@@ -73,7 +95,7 @@ describe("single-click navigation during live updates", () => {
         expect(listBalances).toHaveBeenCalledOnce();
         expect(acknowledgements).toEqual(["1", "2", "3"]);
         gate.resolve(); await selected;
-        expect(applied.filter(text => text.includes("New order · execution"))).toHaveLength(1);
+        expect(applied.filter(text => text.includes("Order type"))).toHaveLength(1);
         return;
       }
       if (stage === "slow acknowledgement") {
@@ -88,7 +110,7 @@ describe("single-click navigation during live updates", () => {
       if (stage === "expired acknowledgement") {
         delayNext = true;
         await click("orderpairside:1:BUY");
-        expect(applied.at(-1)).toContain("New order · execution");
+        expect(applied.at(-1)).toContain("Order type");
         return;
       }
       if (stage.includes("balance")) {
@@ -97,7 +119,7 @@ describe("single-click navigation during live updates", () => {
         delayNext = true;
         const selected = click(`orderpairside:1:${stage.includes("buy") ? "BUY" : "SELL"}`);
         await vi.advanceTimersByTimeAsync(1100);
-        const firstClickRendered = applied.at(-1)?.includes("New order · execution");
+        const firstClickRendered = applied.at(-1)?.includes("Order type");
         const reads = listBalances.mock.calls.length;
         gate.resolve(); await selected;
         expect(firstClickRendered).toBe(true);

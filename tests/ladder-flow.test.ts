@@ -71,7 +71,7 @@ describe("ladder strategy flow", () => {
       expect(draft).toMatchObject({ kind: "LADDER", levels: 10, childKind: "LIMIT_GTC", postOnly: false });
       expect(draft?.childLimitPrice).toBeUndefined();
       expect(database.getWizard(1, 1)).toBeNull();
-      const confirmation = calls.find(item => ["sendMessage", "editMessageText"].includes(item.method) && String(item.payload.text).includes("Strategy is ready"));
+      const confirmation = calls.find(item => ["sendMessage", "editMessageText"].includes(item.method) && String(item.payload.text).includes("Nothing submitted yet."));
       expect(confirmation).toBeDefined();
       expect(String(confirmation?.payload.text)).not.toContain("Child:");
       expect(String(confirmation?.payload.text)).toContain("10 limit orders");

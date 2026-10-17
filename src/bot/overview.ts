@@ -13,11 +13,18 @@ export async function renderOverview(gateway: ExchangeGateway, config: AppConfig
   const holdings: string[] = [];
   const marketRows = markets.status === "fulfilled" ? markets.value : [];
   const usdtPrices = buildUsdtPrices(catalog.pairs, marketRows);
+  const balanceValue = (balance: Awaited<ReturnType<ExchangeGateway["listBalances"]>>[number]) => {
+    const symbol = catalog.assets.find(asset => asset.ledgerId === balance.assetId)?.asset;
+    const price = symbol ? usdtPrices.get(symbol) : undefined;
+    const value = Number(scaledToDecimal((BigInt(balance.trading) + BigInt(balance.funding)).toString(), 18)) * (price ?? NaN);
+    return Number.isFinite(value) ? value : undefined;
+  };
   const orderedBalances = balances.status === "fulfilled"
     ? [...balances.value].sort((left, right) => {
-      const leftSymbol = catalog.assets.find(asset => asset.ledgerId === left.assetId)?.asset;
-      const rightSymbol = catalog.assets.find(asset => asset.ledgerId === right.assetId)?.asset;
-      return Number(rightSymbol === "USDT") - Number(leftSymbol === "USDT");
+      const leftValue = balanceValue(left), rightValue = balanceValue(right);
+      if (leftValue === undefined) return rightValue === undefined ? 0 : 1;
+      if (rightValue === undefined) return -1;
+      return rightValue - leftValue;
     })
     : [];
   for (const balance of orderedBalances) {
@@ -39,7 +46,7 @@ export async function renderOverview(gateway: ExchangeGateway, config: AppConfig
     ...(config.tradingMode === "live" ? [] : [modeText(config.tradingMode)]), "",
     "<b>◈ PORTFOLIO</b>",
     balances.status === "fulfilled" && markets.status === "fulfilled" ? `Estimated value: <b>≈ ${numberText(estimated.toFixed(2), 2)} USDT</b>` : "Estimated value: <b>Unavailable</b>",
-    `Volume: <b>${numberText(Number(localVolume).toFixed(2), 2)} USDT</b> <i>(filled via bot)</i>`,
+    `Bot trading volume: <b>${numberText(Number(localVolume).toFixed(2), 2)} USDT</b>`,
     `Open orders: <b>${orders.status === "fulfilled" ? orders.value.length : "—"}</b>`,
     "",
     "<b>◉ TOP BALANCES</b>",

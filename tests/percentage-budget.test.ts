@@ -44,8 +44,8 @@ describe("all-in percentage buy budgets", () => {
         expect(compareDecimals(draft.qty!, "0")).toBeGreaterThan(0);
       }
       const card = formatOrderDraft(draft);
-      expect(card).toContain("including Fee");
-      expect(card).not.toContain("Fee is charged in addition");
+      expect(card).toContain("including fees");
+      expect(card).not.toContain("Fees are additional");
       const frozen = structuredClone(draft);
       await resolveQuoteAmount({ ...gateway, listBalances: async () => { throw Error("Must not reread percentage balance"); } }, pair, draft);
       expect(draft).toEqual(frozen);

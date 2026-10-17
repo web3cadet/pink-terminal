@@ -27,7 +27,7 @@ export function pairsKeyboard(pairs: PairConfig[], page: number, prefix: "pair" 
   if (safePage > 0) keyboard.text("‹", `${prefix === "pair" ? "markets" : `${prefix}page`}:${safePage - 1}`);
   keyboard.text(`${safePage + 1}/${pages}`, "noop");
   if (safePage < pages - 1) keyboard.text("›", `${prefix === "pair" ? "markets" : `${prefix}page`}:${safePage + 1}`);
-  keyboard.row().text("‹ Overview", "home");
+  keyboard.row().text("‹ Terminal", "home");
   return keyboard;
 }
 
@@ -38,7 +38,7 @@ export function orderOptionsKeyboard(draft: Partial<OrderDraft>): InlineKeyboard
     .text(draft.attachedRisk?.stopLossPrice ? "✅ Stop-loss" : "+ Stop-loss", "ordrisk:sl").row()
     .text(draft.attachedRisk?.trailingBps || draft.attachedRisk?.trailingDistance ? "✅ Trailing stop" : "+ Trailing stop", "ordrisk:trail").row();
   if (draft.kind === "MARKET_IOC") keyboard.text("⚙ Maximum slippage", "ordrisk:slippage").row();
-  keyboard.text("Continue to confirmation", "ordpreview").row().text("✎ Change amount", "order:edit:size").row().text("✕ Cancel order", "cancel-flow");
+  keyboard.text("Continue", "ordpreview").row().text("✎ Change amount", "order:edit:size").row().text("✕ Discard order", "cancel-flow");
   return keyboard;
 }
 
@@ -46,23 +46,17 @@ export function orderKindCard(symbol: string, side?: OrderSide, balances = ""): 
   const displaySymbol = escapeHtml(symbol.replace("-", " / "));
   const sideLabel = side === "BUY" ? "🟢 BUY" : side === "SELL" ? "🔴 SELL" : "—";
   return [
-    heading("New order · execution"),
+    heading("Order type"),
     `<b>${displaySymbol}</b>  ·  ${sideLabel}`,
     balances,
-    "<code>STEP 3 OF 5  ·  EXECUTION</code>",
-    "",
-    "<b>How should this order execute?</b>",
-    "",
-    "<blockquote><b>⚡ MARKET · Execute now</b>\nUses the best available prices. Any amount that cannot fill immediately is cancelled.</blockquote>",
-    "<blockquote><b>🎯 LIMIT · Control the price</b>\nYou set the price, then choose how long the order may remain active.</blockquote>",
+    "<b>Market</b> — execute at available market prices. Unfilled remainder is cancelled.",
+    "<b>Limit</b> — execute at your price or better.",
     "",
     "<b>Limit order choices</b>",
     "• <b>GTC</b> — stays open until filled or cancelled",
     "• <b>GTD</b> — stays open until the time you set",
     "• <b>IOC</b> — fills what is available now; cancels the rest",
-    "• <b>FOK</b> — fills the entire amount now or nothing",
-    "",
-    "<i>Market prioritizes speed. Limit prioritizes price.</i>"
+    "• <b>FOK</b> — fills the entire amount now or nothing"
   ].join("\n");
 }
 
@@ -73,35 +67,46 @@ export function orderKindKeyboard(): InlineKeyboard {
     .text("⏳ Limit · until time (GTD)", "ordkind:LIMIT_GTD").row()
     .text("↯ Limit · fill available (IOC)", "ordkind:LIMIT_IOC").row()
     .text("◆ Limit · all or nothing (FOK)", "ordkind:LIMIT_FOK").row()
-    .text("✕ Cancel order", "cancel-flow");
+    .text("✕ Discard order", "cancel-flow");
 }
 
 export function formatOrderDraft(draft: Partial<OrderDraft>): string {
   const risk = draft.attachedRisk;
   const [base = "token", quote = "quote"] = (draft.symbol ?? "").split("-").map(escapeHtml);
-  const kind = draft.kind === "MARKET_IOC" ? "Market · execute now"
-    : draft.kind === "LIMIT_GTC" ? "Limit · stays open (GTC)"
-    : draft.kind === "LIMIT_GTD" ? "Limit · until time (GTD)"
-    : draft.kind === "LIMIT_IOC" ? "Limit · fill available (IOC)"
-    : draft.kind === "LIMIT_FOK" ? "Limit · all or nothing (FOK)" : "—";
+  const kind = orderKindLabel(draft.kind);
+  const budget = draft.side === "BUY" && (draft.maxQuoteDebit || (draft.balancePercent && draft.quoteAmount));
+  const value = draft.qty && (draft.price || draft.sizingPrice)
+    ? multiplyDecimals(draft.qty, (draft.price || draft.sizingPrice)!) : undefined;
   return [
-    `<b>${escapeHtml(draft.side ?? "—")} ${escapeHtml(draft.symbol ?? "—")}</b>`,
-    `Order: <b>${kind}</b>`,
+    `<b>${escapeHtml(draft.side ?? "—")} ${escapeHtml((draft.symbol ?? "—").replace("-", " / "))} · ${kind}</b>`,
+    "",
     draft.balancePercent ? `Balance share: <b>${escapeHtml(draft.balancePercent)}%</b> of available ${escapeHtml(draft.percentageAsset ?? "")}` : null,
-    draft.quoteAmount && draft.balancePercent && draft.side === "BUY" ? `Budget: <b>${escapeHtml(draft.maxQuoteDebit ?? draft.quoteAmount)} ${quote}</b> (including Fee)` : draft.quoteAmount ? `${draft.side === "SELL" ? "Sell" : "Buy"} for: <b>${escapeHtml(draft.quoteAmount)} ${quote}</b> (before Fee)` : null,
-    draft.qty ? `Quantity: <code>${escapeHtml(draft.qty)} ${base}</code>` : draft.maxQuoteDebit && !draft.quoteAmount ? `Spend up to: <code>${escapeHtml(draft.maxQuoteDebit)} ${quote}</code> (including Fee)` : draft.quoteAmount ? null : "Amount: <b>Not set</b>",
-    draft.quoteAmount && draft.qty && draft.sizingPrice ? `Estimated value: <code>${multiplyDecimals(draft.qty, draft.sizingPrice)} ${quote}</code> before Fee` : null,
-    draft.quoteAmount && draft.balancePercent && draft.side === "BUY" ? `<i>${draft.maxQuoteDebit ? "Polyester calculates the quantity within your budget, including Fee and price protection." : "Quantity is rounded down after reserving Fee within your budget."} Actual spending may be lower.</i>` : draft.quoteAmount ? `<i>Quantity is rounded down to the pair's step. ${draft.kind === "MARKET_IOC" ? "Market execution may change the final value." : "Final value depends on the fill price and filled quantity."} ${draft.side === "SELL" ? "Fee reduces your proceeds." : "Fee is charged in addition to the trade value."}</i>` : null,
-    draft.balancePercent && !draft.quoteAmount ? "<i>Quantity is rounded down to the pair's step. Fee reduces your proceeds.</i>" : null,
-    draft.price ? `Price: <code>${escapeHtml(draft.price)} ${quote}</code>` : null,
+    budget ? `Budget: <b>${escapeHtml(draft.maxQuoteDebit ?? draft.quoteAmount!)} ${quote}</b> (including fees)` : null,
+    draft.quoteAmount && !budget ? `Entered value: <b>${escapeHtml(draft.quoteAmount)} ${quote}</b> (before fees)` : null,
+    draft.qty ? `Quantity: <code>${escapeHtml(draft.qty)} ${base}</code>` : budget ? "Quantity: calculated by Polyester within the budget" : "Quantity: Not set",
+    draft.price ? `Limit price: <code>${escapeHtml(draft.price)} ${quote}</code>` : null,
+    value && !budget ? `${draft.kind === "MARKET_IOC" ? "Estimated value" : "Order value"}: <code>${value} ${quote}</code> (excluding fees)` : null,
     draft.expireAt ? `Expires: <code>${escapeHtml(draft.expireAt)}</code>` : null,
-    draft.postOnly ? "Post-only: yes" : null,
-    draft.maxSlippageBps ? `Slippage cap: ${draft.maxSlippageBps} bps` : null,
-    risk?.takeProfitPrice ? `Take profit: <code>${escapeHtml(risk.takeProfitPrice)}</code>` : null,
-    risk?.stopLossPrice ? `Stop loss: <code>${escapeHtml(risk.stopLossPrice)}</code>` : null,
+    draft.postOnly ? "Post-only: ON" : null,
+    draft.maxSlippageBps ? `Max. slippage: ${draft.maxSlippageBps} bps` : null,
+    risk?.takeProfitPrice ? `Take-profit: <code>${escapeHtml(risk.takeProfitPrice)} ${quote}</code>` : null,
+    risk?.stopLossPrice ? `Stop-loss: <code>${escapeHtml(risk.stopLossPrice)} ${quote}</code>` : null,
     risk?.trailingBps ? `Trailing: ${risk.trailingBps} bps` : null,
-    risk?.activationPrice ? `Trailing activation: <code>${escapeHtml(risk.activationPrice)}</code>` : null
-  ].filter(Boolean).join("\n");
+    risk?.activationPrice ? `Trailing activation: <code>${escapeHtml(risk.activationPrice)} ${quote}</code>` : null,
+    "",
+    draft.kind === "MARKET_IOC" ? "Final quantity and cost depend on execution." : "Final value depends on filled quantity and execution price.",
+    budget ? "Fees are included in the budget. Actual spending may be lower."
+      : draft.side === "SELL" ? "Fees reduce the proceeds." : "Fees are additional.",
+    draft.quoteAmount || draft.balancePercent ? "Quantity is rounded down to the pair's step." : null
+  ].filter(line => line !== null).join("\n");
+}
+
+export function orderKindLabel(kind?: string): string {
+  return kind === "MARKET_IOC" ? "Market" : kind?.startsWith("LIMIT_") ? `Limit ${escapeHtml(kind.slice(6))}` : "—";
+}
+
+export function strategyKindLabel(kind?: string): string {
+  return ({ STOP_LOSS: "Stop-loss", TAKE_PROFIT: "Take-profit", TRAILING_STOP: "Trailing stop", TWAP: "TWAP", LADDER: "Ladder" } as Record<string, string>)[kind ?? ""] ?? "Strategy";
 }
 
 export function formatTriggerDraft(draft: Partial<TriggerDraft>): string {
@@ -116,18 +121,18 @@ export function formatTriggerDraft(draft: Partial<TriggerDraft>): string {
     : draft.childKind === "LIMIT_GTC"
       ? `Limit order at ${draft.childLimitPrice ?? "—"} ${quoteAsset}; remains open until filled or cancelled.`
       : draft.childKind === "MARKET_IOC"
-        ? "Market execution when triggered; any unfilled remainder is cancelled."
+        ? `${draft.kind === "TWAP" ? "Market execution for each scheduled slice" : "Market execution when triggered"}; any unfilled remainder is cancelled.`
         : null;
   return [
     `<b>${escapeHtml(kind)}</b> · ${escapeHtml(String(draft.symbol ?? "—").replace("-", " / "))}`,
     `Action: <b>${escapeHtml(draft.side === "BUY" ? "Buy" : draft.side === "SELL" ? "Sell" : "—")}</b>`,
-    `Total amount: <code>${escapeHtml(draft.qty ?? "—")} ${escapeHtml(baseAsset)}</code>`,
-    draft.triggerPrice ? `Activates at: <code>${escapeHtml(draft.triggerPrice)} ${escapeHtml(quoteAsset)}</code>` : null,
+    `Total quantity: <code>${escapeHtml(draft.qty ?? "—")} ${escapeHtml(baseAsset)}</code>`,
+    draft.triggerPrice ? `Trigger price: <code>${escapeHtml(draft.triggerPrice)} ${escapeHtml(quoteAsset)}</code>` : null,
     draft.trailingBps ? `Trailing: ${draft.trailingBps} bps` : null,
     draft.activationPrice ? `Starts tracking at: <code>${escapeHtml(draft.activationPrice)} ${escapeHtml(quoteAsset)}</code>` : null,
     draft.maxSlippageBps !== undefined ? `Maximum slippage: ${draft.maxSlippageBps} bps` : null,
     draft.durationMs ? `Duration: ${draft.durationMs / 1000}s` : null,
-    draft.sliceIntervalMs ? `Slice interval: ${draft.sliceIntervalMs / 1000}s` : null,
+    draft.sliceIntervalMs ? `Order interval: ${draft.sliceIntervalMs / 1000}s` : null,
     draft.priceMin ? `Price range: <code>${escapeHtml(draft.priceMin)}–${escapeHtml(draft.priceMax)} ${escapeHtml(quoteAsset)}</code>` : null,
     execution ? `Execution: ${escapeHtml(execution)}` : null
   ].filter(Boolean).join("\n");
