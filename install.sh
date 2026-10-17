@@ -46,6 +46,35 @@ trap 'exit 143' TERM
 say() { printf '%b\n' "$*" >&4; }
 die() { say "${RED}${BOLD}Error:${RESET} $*"; exit 1; }
 
+terminal_columns() {
+  local size rows columns
+  # Read the actual terminal opened by the installer, even for curl | bash.
+  size="$( { stty size <&3; } 2>/dev/null)" || size=''
+  read -r rows columns <<< "$size"
+  if [[ "${columns:-}" =~ ^[1-9][0-9]{0,4}$ ]]; then printf '%s' "$columns"; return; fi
+  # Do not let stale exported COLUMNS/LINES override the terminal query.
+  columns="$(unset COLUMNS LINES; tput cols 2>/dev/null)" || columns=''
+  if [[ "$columns" =~ ^[1-9][0-9]{0,4}$ ]]; then printf '%s' "$columns"; return; fi
+  columns="${COLUMNS:-80}"
+  [[ "$columns" =~ ^[1-9][0-9]{0,4}$ ]] || columns=80
+  printf '%s' "$columns"
+}
+
+banner_width() {
+  local text="$1" glyph
+  # These fixed glyphs occupy one cell; count correctly even under LC_ALL=C.
+  for glyph in █ ╗ ╔ ═ ║ ╚ ╝ ·; do text="${text//"$glyph"/#}"; done
+  printf '%s' "${#text}"
+}
+
+banner_line() {
+  local text="$1" columns="$2" width padding
+  width="${3:-$(banner_width "$text")}"
+  padding=$(( (columns - width) / 2 ))
+  (( padding >= 0 )) || padding=0
+  printf '%*s%s\n' "$padding" '' "$text" >&4
+}
+
 banner() {
   # Full PINK TERMINAL in the original block-letter style.
   local -a pink=(
@@ -64,25 +93,56 @@ banner() {
     '   ██║   ███████╗██║  ██║██║ ╚═╝ ██║██║██║ ╚████║██║  ██║███████╗'
     '   ╚═╝   ╚══════╝╚═╝  ╚═╝╚═╝     ╚═╝╚═╝╚═╝  ╚═══╝╚═╝  ╚═╝╚══════╝'
   )
-  local columns="${COLUMNS:-}" row width=0 line
-  if [[ ! "$columns" =~ ^[0-9]+$ ]]; then columns="$(tput cols 2>/dev/null || printf '80')"; fi
-  [[ "$columns" =~ ^[0-9]+$ ]] || columns=80
+  local columns row width=0 stacked_width=0 pink_width=0 line measured padding
+  columns="$(terminal_columns)"
+  # Strip decorative trailing spaces before measuring or centering.
   for row in "${!pink[@]}"; do
-    line="  ${pink[row]}    ${terminal[row]}"
-    (( ${#line} <= width )) || width=${#line}
+    pink[row]="${pink[row]%"${pink[row]##*[! ]}"}"
+    terminal[row]="${terminal[row]%"${terminal[row]##*[! ]}"}"
   done
+  for row in "${!pink[@]}"; do
+    measured="$(banner_width "${pink[row]}")"
+    (( measured <= pink_width )) || pink_width=$measured
+    measured="$(banner_width "${terminal[row]}")"
+    (( measured <= stacked_width )) || stacked_width=$measured
+  done
+  width=$((pink_width + 4 + stacked_width))
   printf '\033[2J\033[H' >&4
   say "${PINK}${BOLD}"
   if (( columns >= width )); then
-    for row in "${!pink[@]}"; do say "  ${pink[row]}    ${terminal[row]}"; done
-  else
+    for row in "${!pink[@]}"; do
+      measured="$(banner_width "${pink[row]}")"
+      printf -v padding '%*s' "$((pink_width - measured + 4))" ''
+      banner_line "${pink[row]}${padding}${terminal[row]}" "$columns" "$width"
+    done
+  elif (( columns >= stacked_width )); then
     # Preserve the font on narrower SSH terminals instead of wrapping mid-letter.
-    for line in "${pink[@]}"; do say "  $line"; done
+    for line in "${pink[@]}"; do banner_line "$line" "$columns" "$pink_width"; done
     say ""
-    for line in "${terminal[@]}"; do say "  $line"; done
+    for line in "${terminal[@]}"; do banner_line "$line" "$columns" "$stacked_width"; done
+  elif (( columns >= 31 )); then
+    # Compact 3 x 5 lettering, still the full two words, for mobile terminals.
+    for line in '██  ███ █ █ █ █' '█ █  █  ███ ██ ' '██   █  ███ █  ' '█    █  ███ ██ ' '█   ███ █ █ █ █'; do
+      banner_line "$line" "$columns" 15
+    done
+    say ''
+    for line in '███ ███ ██  █ █ ███ █ █  █  █  ' ' █  █   █ █ ███  █  ███ █ █ █  ' ' █  ██  ██  ███  █  ███ ███ █  ' ' █  █   █ █ █ █  █  ███ █ █ █  ' ' █  ███ █ █ █ █ ███ █ █ █ █ ███'; do
+      banner_line "$line" "$columns" 31
+    done
+  elif (( columns >= 13 )); then
+    banner_line 'PINK TERMINAL' "$columns"
+  else
+    banner_line 'PINK' "$columns"
+    banner_line 'TERMINAL' "$columns"
   fi
   say "${RESET}"
-  say "${DIM}                     self-hosted · testnet · private${RESET}"
+  printf '%b' "$DIM" >&4
+  if (( columns >= 31 )); then
+    banner_line 'self-hosted · testnet · private' "$columns"
+  elif (( columns >= 11 )); then
+    for line in self-hosted testnet private; do banner_line "$line" "$columns"; done
+  fi
+  say "${RESET}"
   say ""
 }
 

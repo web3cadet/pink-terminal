@@ -19,6 +19,10 @@ class InstallerUiTest(unittest.TestCase):
     def run_script(self, names, body, env=None):
         script = "set -eu\nexec 4>&1\nPINK='' GREEN='' CYAN='' RED='' DIM='' BOLD='' RESET=''\n"
         script += "INSTALL_LOG_DIR='' SPINNER_PID=''\numask 077\nsay() { printf '%b\\n' \"$*\" >&4; }\n"
+        # Deterministic no-TTY defaults; individual tests replace these probes.
+        script += "stty() { return 1; }; tput() { return 1; }; exec 3</dev/null\n"
+        if 'banner' in names:
+            names = ['terminal_columns', 'banner_width', 'banner_line'] + names
         script += "\n".join(function(name) for name in names) + "\n" + body
         return subprocess.run(["bash", "-c", script], capture_output=True, encoding="utf-8", timeout=15,
                               env={**os.environ, **(env or {})})
@@ -40,6 +44,65 @@ class InstallerUiTest(unittest.TestCase):
         self.assertEqual(len(art), 12)
         self.assertTrue(all(len(line) <= 80 for line in art))
         self.assertIn("██╗███╗   ██╗ █████╗ ██╗", result.stdout)
+
+    def test_actual_tty_width_wins_over_stale_environment(self):
+        result = self.run_script(['banner'], 'stty() { echo "40 140"; }; banner', {'COLUMNS': '80', 'LC_ALL': 'C'})
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(sum('█' in line or '╚' in line for line in result.stdout.splitlines()), 6)
+
+    def test_width_fallbacks_and_invalid_values(self):
+        cases = [
+            ('stty() { echo "30 39"; }; tput() { echo 140; };', '80', '39'),
+            ('stty() { echo "0 0"; }; tput() { [[ -z "${COLUMNS:-}" && -z "${LINES:-}" ]] || return 1; echo 100; };', '80', '100'),
+            ('', '42', '42'), ('', '0', '80'), ('', '-1', '80'),
+            ('', 'garbage', '80'), ('', '99999999999999999999', '80'),
+        ]
+        for probes, columns, expected in cases:
+            with self.subTest(columns=columns, expected=expected):
+                result = self.run_script(['terminal_columns'], probes + ' terminal_columns', {'COLUMNS': columns, 'LINES': '24'})
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(result.stdout, expected)
+
+    def test_banner_fits_mobile_and_desktop_in_both_locales(self):
+        for locale in ['C', 'C.UTF-8']:
+            for columns in [8, 12, 13, 20, 30, 31, 32, 39, 60, 63, 64, 65, 80, 96, 100, 120, 140, 200]:
+                with self.subTest(locale=locale, columns=columns):
+                    result = self.run_script(['banner'], 'banner', {'COLUMNS': str(columns), 'LC_ALL': locale})
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    text = re.sub(r'\x1b\[[0-9;]*[A-Za-z]', '', result.stdout)
+                    self.assertTrue(all(len(line) <= columns for line in text.splitlines()), repr(text))
+                    if columns < 31:
+                        self.assertIn('PINK', text)
+                        self.assertIn('TERMINAL', text)
+                    elif columns < 63:
+                        self.assertEqual(sum('█' in line for line in text.splitlines()), 10)
+
+    def test_width_is_measured_again_on_next_render(self):
+        result = self.run_script(['banner'], 'stty() { echo "30 $TEST_WIDTH"; }; TEST_WIDTH=140; banner; echo SPLIT; TEST_WIDTH=39; banner')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        wide, narrow = result.stdout.split('SPLIT')
+        self.assertEqual(sum('█' in line or '╚' in line for line in wide.splitlines()), 6)
+        self.assertEqual(sum('█' in line for line in narrow.splitlines()), 10)
+
+    @unittest.skipIf(os.name == 'nt', 'POSIX pseudo-terminal test runs on Linux/macOS')
+    def test_real_pty_size_with_piped_stdin_and_stale_columns(self):
+        import fcntl
+        import pty
+        import struct
+        import termios
+        master, slave = pty.openpty()
+        try:
+            script = 'set -eu\nexec 3<&' + str(slave) + '\n' + function('terminal_columns') + '\nterminal_columns'
+            for columns in [140, 39, 80]:
+                fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack('HHHH', 24, columns, 0, 0))
+                result = subprocess.run(['bash', '-c', script], input='', capture_output=True, text=True,
+                                        pass_fds=(slave,), timeout=5,
+                                        env={**os.environ, 'COLUMNS': '80', 'LC_ALL': 'C'})
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(result.stdout, str(columns))
+        finally:
+            os.close(master)
+            os.close(slave)
 
     def test_old_uninstall_residue_is_backed_up_and_destination_can_be_reused(self):
         with tempfile.TemporaryDirectory(prefix="pink-residue-") as base:
