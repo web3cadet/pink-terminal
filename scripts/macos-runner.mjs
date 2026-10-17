@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { createServer } from "node:net";
-import { writeFile, rename, readFile, rm } from "node:fs/promises";
+import { writeFile, rename } from "node:fs/promises";
 import { timingSafeEqual } from "node:crypto";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -51,8 +51,5 @@ try {
   await import(pathToFileURL(path.resolve("dist", "index.js")).href);
 } finally {
   await new Promise(resolve => server.close(resolve));
-  try {
-    const state = JSON.parse(await readFile(stateFile, "utf8"));
-    if (state.pid === process.pid && state.token === token) await rm(stateFile, { force: true });
-  } catch { /* State may have been cleaned up by the manager. */ }
+  // Keep the PID until a manager has observed actual exit, not just socket closure.
 }

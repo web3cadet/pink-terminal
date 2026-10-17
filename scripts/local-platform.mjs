@@ -3,3 +3,9 @@ export function localPlatform(platform = process.platform) {
   if (platform === "darwin") return { label: "macOS (Beta)", manager: "macos-manager.mjs", state: "macos-bot.json" };
   throw new Error("Local installation supports Windows and macOS. On Ubuntu, use install.sh and manage.sh.");
 }
+export function nodeVersionIsSupported(version = process.versions.node) {
+  if (!/^\d+\.\d+\.\d+$/.test(version)) return false;
+  const [major, minor] = version.split(".").map(Number);
+  // Match the validation toolchain as well as the runtime; Node 23/25 are excluded.
+  return (major === 22 && minor >= 12) || major === 24 || major >= 26;
+}

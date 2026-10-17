@@ -1,14 +1,11 @@
 #!/usr/bin/env node
 
-import { existsSync, readFileSync } from "node:fs";
-import { rm } from "node:fs/promises";
 import { createServer } from "node:net";
 import path from "node:path";
 import process from "node:process";
 import { pathToFileURL } from "node:url";
 
 const APP_DIR = process.cwd();
-const STATE_FILE = path.join(APP_DIR, ".runtime", "windows-bot.json");
 const pipeName = process.argv[2];
 
 if (process.platform !== "win32") throw new Error("The Windows runner can only be used on Windows.");
@@ -36,7 +33,7 @@ const server = createServer((socket) => {
       if (!stopping) {
         stopping = true;
         setImmediate(() => process.emit("SIGTERM", "SIGTERM"));
-        setTimeout(() => process.exit(0), 8_000).unref();
+        setTimeout(() => process.exit(1), 8_000).unref();
       }
       return;
     }
@@ -53,10 +50,5 @@ try {
   await import(pathToFileURL(path.join(APP_DIR, "dist", "index.js")).href);
 } finally {
   await new Promise((resolve) => server.close(resolve));
-  if (existsSync(STATE_FILE)) {
-    try {
-      const state = JSON.parse(readFileSync(STATE_FILE, "utf8"));
-      if (Number(state.pid) === process.pid && state.pipeName === pipeName) await rm(STATE_FILE, { force: true });
-    } catch { /* A malformed state file is left for the manager to report as stale. */ }
-  }
+  // Only the manager removes state after verifying that this PID has exited.
 }

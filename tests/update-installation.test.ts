@@ -78,6 +78,7 @@ describe("local update workflow", () => {
     const installer = readFileSync("scripts/windows-installer.mjs", "utf8");
     expect(installer.indexOf("assertUpdateTarget(TARGET_DIR)")).toBeLessThan(installer.indexOf("await copyApplication()"));
     expect(installer).toContain("keepExisting && !UPDATE_ONLY");
-    expect(installer.indexOf('"Stop before update"')).toBeLessThan(installer.indexOf("await copyApplication()"));
+    expect(installer).toContain("if (!VERIFY_INSTALL) stopBeforeInstall(TARGET_DIR, SOURCE_DIR, run)");
+    expect(installer.indexOf("stopBeforeInstall(TARGET_DIR")).toBeLessThan(installer.indexOf("await copyApplication()"));
   });
 });

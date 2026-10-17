@@ -15,6 +15,8 @@ jobs:
         node: ['22']
         include:
           - os: windows-latest
+            node: '22.12.0'
+          - os: windows-latest
             node: '24'
           - os: ubuntu-24.04
             node: '24'
@@ -37,5 +39,6 @@ jobs:
           bash -n install.sh manage.sh
           python3 tests/uninstall-linux-test.py
           python3 tests/setup-access-shell-test.py
+          python3 tests/docker-ready-shell-test.py
           docker build -t pink-terminal-ci .
           docker run --rm --entrypoint node pink-terminal-ci --check dist/index.js

@@ -5,12 +5,10 @@ import { createConnection } from "node:net";
 import { randomBytes } from "node:crypto";
 import path from "node:path";
 import { withManagementLock, runtimeEnvironment } from "./management-lock.mjs";
+import { isProcessAlive, trackChild, waitForProcessExit } from "./runtime-process.mjs";
 
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
-export function alive(pid) {
-  if (!Number.isSafeInteger(pid) || pid <= 0) return false;
-  try { process.kill(pid, 0); return true; } catch { return false; }
-}
+export const alive = isProcessAlive;
 
 export async function control(state, command) {
   if (!Number.isInteger(state.port) || state.port < 1 || state.port > 65535 || !/^[a-f0-9]{64}$/.test(state.token ?? "")) return false;
@@ -51,6 +49,10 @@ export class MacProcess {
       if (error.code === "ENOENT") return { running: false };
       throw new Error("Unreadable macOS runtime state. Resolve it before starting another instance.");
     }
+    if (!state || !Number.isSafeInteger(state.pid) || state.pid <= 0 ||
+        !Number.isInteger(state.port) || state.port < 1 || state.port > 65535 || !/^[a-f0-9]{64}$/.test(state.token ?? "")) {
+      throw new Error("Invalid macOS runtime state. Refusing to guess which process is running.");
+    }
     const pidAlive = alive(state.pid);
     const running = pidAlive && await control(state, "ping");
     return { ...state, running, ready: running && await control(state, "ready"), unverified: pidAlive && !running };
@@ -81,13 +83,15 @@ export class MacProcess {
       cwd: this.root, detached: true, windowsHide: true, stdio: ["ignore", fd, fd],
       env: { ...runtimeEnvironment(), PINK_CONTROL_TOKEN: token },
     });
-    let spawnError;
-    child.on("error", error => { spawnError = error; });
+    this.tracked = trackChild(child);
     child.unref();
     closeSync(fd);
     for (let attempt = 0; attempt < 225; attempt++) {
       await sleep(200);
-      if (spawnError || !alive(child.pid)) throw new Error(`Bot startup failed. ${spawnError?.code ?? "See npm run bot:logs."}`);
+      if (this.tracked.error || !alive(child.pid)) {
+        await waitForProcessExit(child.pid, { tracked: this.tracked });
+        throw new Error(`Bot startup failed. ${this.tracked.error?.code ?? "See npm run bot:logs."}`);
+      }
       const current = await this.state();
       if (current.ready && current.token === token) return current;
     }
@@ -95,13 +99,15 @@ export class MacProcess {
   }
   async stop() {
     const state = await this.state();
-    if (state.unverified) throw new Error("Process ownership could not be verified; no process was stopped.");
-    if (!state.running) { await rm(this.stateFile, { force: true }); return; }
-    if (!await control(state, "stop")) throw new Error("The bot did not acknowledge Stop. No PID was force-killed.");
-    for (let attempt = 0; attempt < 110; attempt++) {
-      await sleep(100);
-      if (!alive(state.pid) || !existsSync(this.stateFile)) { await rm(this.stateFile, { force: true }); return; }
+    const pid = state.pid ?? this.tracked?.child.pid;
+    const tracked = this.tracked?.child.pid === pid ? this.tracked : undefined;
+    if (state.running && !await control(state, "stop") && alive(pid)) {
+      throw new Error("The bot did not acknowledge Stop. No PID was force-killed.");
     }
-    throw new Error("Shutdown has not completed. Inspect the logs before restarting.");
+    // An unresponsive process may already be exiting. Wait, but never signal an unverified PID.
+    if (!await waitForProcessExit(pid, { tracked })) {
+      throw new Error("Shutdown has not completed or process ownership could not be verified. Runtime state preserved; no PID was force-killed.");
+    }
+    await rm(this.stateFile, { force: true });
   }
 }

@@ -34,6 +34,8 @@ compose() {
   "${DOCKER[@]}" compose --project-directory "$APP_DIR" -f "$APP_DIR/docker-compose.yml" "$@"
 }
 
+source "$APP_DIR/scripts/docker-ready.sh"
+
 pause() {
   say ""
   printf '%b' "${DIM}Press Enter to return to the menu…${RESET}" >&4
@@ -78,7 +80,7 @@ update_bot() {
     say "${YELLOW}This copy is not a Git checkout, so automatic update is unavailable.${RESET}"
     return 1
   fi
-  if git pull --ff-only && compose up -d --build; then
+  if git pull --ff-only && compose up -d --build && wait_for_container_ready; then
     say "${GREEN}Update completed and the bot was rebuilt.${RESET}"
   else
     say "${RED}Update failed. Check Status and Recent logs before retrying.${RESET}"
@@ -107,8 +109,7 @@ while true; do
 
   case "$choice" in
     1)
-      compose up -d
-      say "${GREEN}Bot started.${RESET}"
+      if compose up -d && wait_for_container_ready; then say "${GREEN}Bot started.${RESET}"; fi
       pause
       ;;
     2)
@@ -117,8 +118,7 @@ while true; do
       pause
       ;;
     3)
-      compose up -d --force-recreate bot
-      say "${GREEN}Bot restarted.${RESET}"
+      if compose up -d --force-recreate bot && wait_for_container_ready; then say "${GREEN}Bot restarted.${RESET}"; fi
       pause
       ;;
     4)

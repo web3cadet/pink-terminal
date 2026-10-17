@@ -380,24 +380,9 @@ deploy() {
   fi
 
   progress 94 "Waiting for Telegram initialization"
-  local attempt logs
-  for attempt in {1..45}; do
-    logs="$(compose logs --no-color --tail=120 bot 2>/dev/null || true)"
-    if [[ "$logs" == *'"message":"bot_started"'* ]]; then
-      progress 100 "Ready"
-      return
-    fi
-    if [[ "$logs" == *'"message":"startup_failed"'* ]]; then
-      say "${RED}The bot rejected the configuration during startup.${RESET}"
-      printf '%s\n' "$logs" | tail -n 40 >&4
-      exit 1
-    fi
-    sleep 1
-  done
-
-  say "${RED}The container did not reach Ready state within 45 seconds.${RESET}"
-  compose logs --no-color --tail=60 bot >&4 || true
-  exit 1
+  source "$APP_DIR/scripts/docker-ready.sh"
+  if ! wait_for_container_ready; then exit 1; fi
+  progress 100 "Ready"
 }
 
 main() {

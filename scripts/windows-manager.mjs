@@ -12,6 +12,7 @@ import { planUninstall, removeInstallation } from "./uninstall-files.mjs";
 import { withManagementLock, runtimeEnvironment } from "./management-lock.mjs";
 import { formatLogs } from "./log-view.mjs";
 import { updateInstallation } from "./update-installation.mjs";
+import { isProcessAlive, trackChild, waitForProcessExit } from "./runtime-process.mjs";
 
 const APP_DIR = process.cwd();
 const RUNTIME_DIR = path.join(APP_DIR, ".runtime");
@@ -46,11 +47,7 @@ function writeJson(file, value) {
   writeFileSync(file, `${JSON.stringify(value, null, 2)}\n`, { mode: 0o600 });
 }
 
-function isRunning(pid) {
-  if (!Number.isSafeInteger(pid) || pid <= 0) return false;
-  try { process.kill(pid, 0); return true; }
-  catch { return false; }
-}
+const isRunning = isProcessAlive;
 
 function pingPipe(pipeName, timeoutMs = 650, command = "ping") {
   if (typeof pipeName !== "string" || !pipeName.startsWith("\\\\.\\pipe\\polyester-terminal-")) return Promise.resolve(false);
@@ -78,7 +75,7 @@ async function currentState() {
   if (existsSync(STATE_FILE)) {
     try { state = JSON.parse(readFileSync(STATE_FILE, "utf8")); }
     catch { fail("Unreadable runtime state. Refusing to guess which process is running."); }
-    if (!state || !Number.isSafeInteger(state.pid) || state.pid <= 0) fail("Invalid runtime state. Refusing a duplicate launch.");
+    if (!state || !Number.isSafeInteger(state.pid) || state.pid <= 0 || typeof state.pipeName !== "string" || !state.pipeName.startsWith("\\\\.\\pipe\\polyester-terminal-")) fail("Invalid runtime state. Refusing a duplicate launch.");
   }
   const pidAlive = isRunning(Number(state.pid));
   const owned = pidAlive && await pingPipe(state.pipeName);
@@ -120,19 +117,26 @@ async function startBot() {
     stdio: ["ignore", logFd, logFd],
     env: runtimeEnvironment(),
   });
-  let spawnError;
-  child.on("error", error => { spawnError = error; });
+  const tracked = trackChild(child);
   child.unref();
   closeSync(logFd);
-  writeJson(STATE_FILE, { pid: child.pid, pipeName, startedAt: new Date().toISOString() });
+  try {
+    writeJson(STATE_FILE, { pid: child.pid, pipeName, startedAt: new Date().toISOString() });
+  } catch {
+    // The freshly spawned child is ours, but without state a later manager cannot own it.
+    child.kill();
+    await waitForProcessExit(child.pid, { tracked });
+    fail("Could not save runtime state. Startup aborted; check directory permissions.");
+  }
   let ready = false;
   for (let attempt = 0; attempt < 225; attempt++) {
     await sleep(200);
-    if (spawnError || !isRunning(child.pid)) break;
+    if (tracked.error || !isRunning(child.pid)) break;
     if (await pingPipe(pipeName, 650, "ready")) { ready = true; break; }
   }
   if (!ready && isRunning(child.pid)) fail("Telegram readiness was not confirmed. Runtime state was preserved; inspect Status and Logs before retrying.");
   if (!ready) {
+    if (!await waitForProcessExit(child.pid, { tracked })) fail("Startup failed, but process exit is not confirmed. Runtime state preserved.");
     const tail = formatLogs(tailLog(35));
     await rm(STATE_FILE, { force: true });
     fail(`The bot stopped during startup.\n\n${tail}`);
@@ -144,7 +148,7 @@ async function startBot() {
 async function stopBot({ quiet = false } = {}) {
   const state = await currentState();
   if (!state.running) {
-    if (isRunning(Number(state.pid))) fail("A process still exists but its control channel could not be verified. No process was killed; runtime state was preserved.");
+    if (!await waitForProcessExit(state.pid)) fail("A process still exists but its control channel could not be verified. No process was killed; runtime state was preserved.");
     await rm(STATE_FILE, { force: true });
     if (!quiet) print(`${color.yellow}Already stopped.${color.reset}`);
     return;
@@ -162,23 +166,14 @@ async function stopBot({ quiet = false } = {}) {
     socket.setTimeout(1500, () => finish(false));
     socket.once("error", () => finish(false));
     socket.on("data", (data) => { if (data.includes("stopping")) finish(true); });
+    socket.once("end", () => finish(false));
+    socket.once("close", () => finish(false));
     socket.once("connect", () => socket.write("stop\n"));
   });
   if (!graceful) fail("The bot ownership check failed; no process was terminated.");
-  for (let attempt = 0; attempt < 20 && isRunning(Number(state.pid)); attempt += 1) await sleep(250);
-  let result = { status: 0, stderr: "", stdout: "" };
-  if (isRunning(Number(state.pid))) {
-    result = spawnSync("taskkill.exe", ["/PID", String(state.pid), "/T", "/F"], {
-      cwd: APP_DIR,
-      windowsHide: true,
-      encoding: "utf8",
-    });
-  }
-  if (result.status !== 0 && isRunning(Number(state.pid))) {
-    fail(`Could not stop PID ${state.pid}. ${result.stderr || result.stdout || ""}`.trim());
-  }
-  for (let attempt = 0; attempt < 20 && isRunning(Number(state.pid)); attempt++) await sleep(100);
-  if (isRunning(Number(state.pid))) fail("Shutdown has not completed. Runtime state preserved.");
+  // The authenticated runner has its own bounded shutdown fallback. Do not taskkill
+  // a PID later: it could have been reused by an unrelated process in the meantime.
+  if (!await waitForProcessExit(state.pid)) fail("Shutdown has not completed. Runtime state preserved.");
   await rm(STATE_FILE, { force: true });
   if (!quiet) print(`${color.yellow}${color.bold}STOPPED${color.reset} · local data preserved`);
 }
@@ -191,6 +186,7 @@ async function restartBot() {
 async function showStatus() {
   const state = await currentState();
   if (state.running) print(`Status: ${state.ready ? `${color.green}${color.bold}RUNNING${color.reset}` : "STARTING · Telegram readiness not confirmed"} · PID ${state.pid}`);
+  else if (isRunning(Number(state.pid))) print("Status: UNVERIFIED · process exists, control channel unavailable");
   else print(`Status: ${color.red}${color.bold}STOPPED${color.reset}${state.stale ? ` ${color.dim}(stale state cleaned on next start)${color.reset}` : ""}`);
   if (state.startedAt) print(`Last start: ${state.startedAt}`);
   if (botLink()) print(`Telegram: ${color.cyan}${botLink()}${color.reset}`);
@@ -239,7 +235,7 @@ async function uninstall() {
   finally { rl.close(); }
   if (answer.trim() !== "DELETE") { print("Uninstall cancelled. Nothing changed."); return false; }
   const state = await currentState();
-  if (state.stale) fail("Cannot verify the stored bot process. Resolve its status before uninstalling.");
+  if (state.stale && isRunning(Number(state.pid))) fail("Cannot verify the stored bot process. Resolve its status before uninstalling.");
   await stopBot({ quiet: true });
   removeInstallation(APP_DIR);
   print("UNINSTALLED. .env preserved. Local history and logs were deleted; no automatic recovery is provided.");

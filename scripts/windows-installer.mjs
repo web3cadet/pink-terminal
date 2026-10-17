@@ -2,7 +2,8 @@
 
 import assert from "node:assert/strict";
 import { runInstallerCommand } from "./installer-process.mjs";
-import { localPlatform } from "./local-platform.mjs";
+import { localPlatform, nodeVersionIsSupported } from "./local-platform.mjs";
+import { stopBeforeInstall } from "./installation-lifecycle.mjs";
 import { retryAccessCheck, replaceApiValues } from "./access-retry.mjs";
 import { withManagementLock } from "./management-lock.mjs";
 import { protectSecretFile, writeSecretFile } from "./secret-file.mjs";
@@ -104,11 +105,6 @@ async function choose(label, minimum, maximum) {
   }
 }
 
-function nodeVersionIsSupported(version = process.versions.node) {
-  const [major, minor] = version.split(".").map(Number);
-  return major > 22 || (major === 22 && minor >= 12);
-}
-
 function validateToken(value) { return /^\d{6,12}:[A-Za-z0-9_-]{25,}$/.test(value); }
 function validateAllowedId(value) { return /^-?[1-9]\d{4,19}$/.test(value); }
 function validateApiKeyId(value) { return /^ak_[A-Za-z0-9]{16,}$/.test(value); }
@@ -150,6 +146,7 @@ async function showDisclaimer() {
 
 function assertTargetIsSafe() {
   if (LOCAL_RUN) return;
+  if (existsSync(path.join(TARGET_DIR, ".git"))) fail("This is a source Git checkout. Update it with Git; the installer will not overwrite your working tree.");
   const entries = readdirSync(TARGET_DIR).filter((name) => ![".vscode", ".env", ".DS_Store"].includes(name));
   const packageFile = path.join(TARGET_DIR, "package.json");
   const recognizedNames = new Set(["pink-terminal", "polyester-telegram-terminal"]);
@@ -323,13 +320,13 @@ async function main() {
   }
   if (SELF_TEST) return runSelfTest();
   localPlatform();
-  if (!nodeVersionIsSupported()) fail(`Node.js 22.12 or newer is required. Detected ${process.versions.node}.`);
+  if (!nodeVersionIsSupported()) fail(`Use Node.js 22.12+, 24.x or 26+. Node 23 and 25 are unsupported by the test toolchain. Detected ${process.versions.node}.`);
 
   banner();
   if (!VERIFY_INSTALL && !UPDATE_ONLY) await showDisclaimer();
   progress(5, "Installer accepted");
   assertTargetIsSafe();
-  if (UPDATE_ONLY) run(process.execPath, [path.join(TARGET_DIR, "scripts", "local-manager.mjs"), "stop"], "Stop before update", { inherit: true });
+  if (!VERIFY_INSTALL) stopBeforeInstall(TARGET_DIR, SOURCE_DIR, run);
   await copyApplication();
   progress(18, "Application files ready");
 

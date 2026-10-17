@@ -21,8 +21,11 @@ class SetupAccessTest(unittest.TestCase):
             script += "\n".join(function(name) for name in ["read_value", "read_secret", "collect_api_key", "replace_api_key", "check_api_access"])
             script += "\nattempts=0\ncompose() { attempts=$((attempts + 1)); test \"$attempts\" -eq 3; }\ncheck_api_access\nprintf 'ATTEMPTS=%s\\n' \"$attempts\"\n"
             seed = "a" * 64
-            result = subprocess.run(["bash", "-c", script], input="\n2\nak_1234567890abcdef\n" + seed + "\n", text=True, capture_output=True, timeout=10, env={**os.environ, "TEST_ROOT": root})
-            self.assertEqual(result.returncode, 0, result.stderr)
+            # Keep LF input on Windows too; text-mode pipes translate it to CRLF.
+            result = subprocess.run(["bash", "-c", script], input=("\n2\nak_1234567890abcdef\n" + seed + "\n").encode(), capture_output=True, timeout=10, env={**os.environ, "TEST_ROOT": Path(root).as_posix()})
+            result.stdout = result.stdout.decode("utf-8")
+            result.stderr = result.stderr.decode("utf-8")
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             self.assertIn("ATTEMPTS=3", result.stdout)
             self.assertNotIn(seed, result.stdout)
             updated = config.read_text()

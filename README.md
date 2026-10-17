@@ -50,7 +50,7 @@ Keep `.runtime` until the bot has stopped: it contains the process-control infor
 
 ### Installation
 
-Install Node.js 22.12+ (including npm) and Git. Open an empty folder in VS Code and run the following command in its terminal. macOS users may also use Terminal in that folder:
+Install Node.js 22.x (22.12 or later), 24.x, or 26+ (including npm) and Git. Node 23/25 are not supported by the validation toolchain. Open an empty folder in VS Code and run the following command in its terminal. macOS users may also use Terminal in that folder:
 
 ```text
 npx --yes github:web3cadet/pink-terminal
