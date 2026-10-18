@@ -1,0 +1,204 @@
+# Pink Terminal — advanced guide
+
+[← Installation and quick start](../README.md)
+
+Detailed installer behavior, recovery, trading controls and development reference.
+
+Copyright © 2026 099andr. Licensed under the
+[Apache License 2.0](../LICENSE).
+
+This is an independent community project. It is not developed or operated by
+the official Polyester team. Polyester is referenced solely to identify
+compatibility with the Polyester testnet. No rights are claimed in the
+Polyester name or related marks.
+
+An independent, self-hosted Telegram interface for Polyester testnet spot markets. Each operator runs a private instance and keeps the Telegram token and Polyester Ed25519 secret on their own VPS.
+
+The project talks directly to Polyester's documented ConnectRPC JSON interface. It does not copy, bundle, or depend on the official TypeScript SDK. Pink Terminal does not set or replace the Telegram bot's profile photo automatically.
+
+## Guided Ubuntu/VPS installer
+
+`install.sh` provides a terminal setup wizard that installs the host prerequisites, obtains the repository, validates the Telegram token, stores secrets in a local mode-`600` `.env`, builds the isolated Docker runtime, checks authenticated Polyester reads and a non-mutating live order preview, and waits for the Telegram bot to reach its started state.
+
+New configurations use LIVE testnet mode without a mode-selection menu. Keeping an existing configuration preserves its mode. Package and build output is replaced by a compact activity indicator in interactive terminals; private diagnostic logs are retained at the path printed by the installer. After startup, the installer retrieves the bot's public Telegram link from Telegram using the running container's configuration. A link lookup failure does not stop an already running bot.
+
+Package installation uses noninteractive debconf and needrestart's list-only mode for that invocation, without changing global Ubuntu settings. Existing modified configuration files are preserved when dpkg has no default action. The installer does not approve needrestart's service restart menu or reboot the VPS; a pending Ubuntu reboot marker produces a separate system notice. Package maintainer scripts may still start or restart the services of the packages being installed, and the installer explicitly starts Docker.
+
+When working from an existing local checkout, run the wizard from the project directory:
+
+```bash
+bash install.sh
+```
+
+For a new Ubuntu or Debian VPS, use the public one-line installer:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/web3cadet/pink-terminal/main/install.sh | bash -s -- --repo https://github.com/web3cadet/pink-terminal.git
+```
+
+The installer reads interactive answers directly from the terminal, so the wizard continues to work when the script is piped from `curl`. After installation, open the numeric management menu with `./manage.sh` to start, stop, restart, inspect status or logs, reconfigure, or update the bot. The installer never asks for a Polyester public key: the API Key ID and 32-byte private Ed25519 seed are sufficient.
+
+## Guided local installer: Windows and macOS (Beta)
+
+### Recovery after accidental file deletion
+
+Stop or uninstall the bot before deleting its files manually. A background process can keep running after its installed scripts have been removed.
+
+If local management commands no longer work, open the affected installation folder in the VS Code terminal and run:
+
+```text
+npx --yes github:web3cadet/pink-terminal --status
+npx --yes github:web3cadet/pink-terminal --stop
+npx --yes github:web3cadet/pink-terminal --uninstall
+```
+
+Run only the action you need. These commands load management code from the downloaded package, without reinstalling the bot or requesting credentials. Uninstall asks you to type `DELETE`. It saves and verifies `.env` in a unique `pink-terminal-backup-*` folder inside your home directory, then removes the installation folder. Unrelated top-level files block deletion. When `package.json` is missing, a valid installation marker is required and only recognized runtime residue is eligible. Local history and logs are permanently deleted. Exchange orders and strategies are not cancelled. The final notice reminds you to leave the deleted working directory before reinstalling; on Ubuntu run `cd "$HOME"` (for root, this is `/root`). If Windows keeps the folder locked, cleanup reports that the folder remains rather than claiming it was removed.
+
+Choosing Exit on the first installer disclaimer uninstalls an identified existing copy with the same backup policy. The menu labels this explicitly. A fresh cancellation creates no application files. The Ubuntu bootstrap can recover an empty destination or old `.env`/bundled CI residue: it saves leftovers outside the destination before cloning again, without deleting unrelated files. If no management scripts remain, this is residue recovery, not proof that a manually deleted bot process has stopped; use the supported uninstall path before deleting files.
+
+Keep `.runtime` until the bot has stopped: it contains the process-control information. If that information is also missing or cannot be verified, recovery must not guess which process to terminate. Use operating-system process tools to identify the instance instead.
+
+### Installation
+
+Install Node.js 22.x (22.13 or later), 24.x, or 26+ (including npm) and Git. Node 22.12 requires an experimental SQLite flag and is not supported; Node 23/25 are not supported by the validation toolchain. Open an empty folder in VS Code and run the following command in its terminal. macOS users may also use Terminal in that folder:
+
+```text
+npx --yes github:web3cadet/pink-terminal
+```
+
+The package exposes `scripts/windows-installer.mjs` as its only executable, so `npx` downloads the current repository and immediately opens the guided installer. It preserves an existing `.env`, `data/`, `.runtime/` and installed dependencies during a source refresh, then synchronizes dependencies, runs the complete check suite, builds production output, validates authenticated reads and a non-mutating live preview, starts the Telegram bot in the background and prints its direct `t.me` URL.
+
+The wizard requests only the Telegram bot token, allowed numeric chat/user ID, Polyester API Key ID, matching 32-byte Ed25519 private seed, and optional subaccount ID. Secret fields are masked. It always configures the current release in LIVE testnet mode; transfer and withdrawal permissions are neither requested nor used.
+
+After installation, management does not require re-running setup:
+
+```text
+npm run manage
+npm run bot:start
+npm run bot:stop
+npm run bot:restart
+npm run bot:update
+npm run bot:status
+npm run bot:logs
+npm run bot:configure
+npm run bot:uninstall
+```
+
+Choose **Update from GitHub** in the menu or run `npm run bot:update`. After confirmation, the bot stops, the current GitHub `main` version and dependencies are installed and checked, then the bot restarts. `.env` and local data are preserved without re-entering credentials. Application files are replaced: back up custom code first. Source Git checkouts are not overwritten; update those with Git. If an update fails, check Status and Logs before restarting; retry Update or the original one-line installer in the same folder. Successful updates close the old manager; reopen `npm run manage` to load the new version.
+
+Use `npm run bot:configure` to change credentials, or `npm run bot:restart` for an ordinary restart or after editing `.env`. Local operation requires an awake, online computer. Start the bot again after logout or reboot. The manager does not register a login service.
+
+macOS support is beta. Windows keeps its existing background runner; macOS uses a separate runner with an authenticated localhost control channel. Both expose the same npm management commands. The `.github/workflows/platform-checks.yml` workflow checks Windows, Ubuntu, macOS Apple Silicon and macOS Intel; a prepared workflow is not evidence of a completed run. A manual macOS setup with real Telegram/Polyester credentials is still required before removing the beta label.
+
+The local manager waits for Telegram initialization before reporting a successful start. If readiness is not confirmed, check Status and Logs; runtime state is retained so the process can still be stopped. This startup check is not a guarantee of continued network connectivity or successful trading.
+
+Replacing the API credentials, endpoint, subaccount or trading mode invalidates pending confirmations and control buttons. Refresh Orders or Strategies to get current buttons. Account switching is not prohibited: local history and statistics remain in the existing database and are not separated by API account. Previously submitted exchange orders and strategies are not cancelled by configuration changes.
+
+If the API access check fails, the installer stays open: press Enter to recheck after updating permissions, or choose 2 to replace only the API Key ID and private seed. Telegram settings are kept. Signature errors are shown separately from permission errors. Transfers and withdrawals are listed as recommended None settings, not as verified permissions. The trading check uses an order preview and places no order.
+
+Use `npm run bot:uninstall` for confirmed removal of a local installed copy, backing up `.env` outside the removed folder. The command deletes local history and logs but does not cancel exchange orders or strategies. It refuses source Git checkouts and unrelated top-level files.
+
+## What is implemented
+
+- live discovery and a single-message terminal for every enabled pair from `GetSpotConfig`; no hard-coded market list
+- 10-second-or-slower in-place price polling, current balances, and open-order summary without Telegram message spam
+- market cards, 24-hour statistics, selectable 1m/5m/1h/4h candle sparklines, and 5/10/20-level order books
+- private Trading/Funding/available/reserved balances
+- market IOC and limit GTC/GTD/IOC/FOK order wizards
+- **Configuration → Amount input** selects quote value (USDT, USDC or the pair's actual quote asset) or base-token quantity for regular orders. Quote value remains the default. For BNB/USDC, quote input means USDC; token input means BNB. Market orders use the ask for buys or bid for sells; limit orders use your limit price. Quantities round down to the pair's step. Actual value depends on execution and fills; Fee adds to buy cost or reduces sell proceeds.
+- All five regular order types accept percentages such as `10%` or `2.5%` in either input mode. Buy uses the available quote-asset balance; Sell uses the available base-token balance, excluding reserved funds. With 500 USDC available, a 10% buy sets a 50 USDC budget **including Fee**. Market IOC and Limit IOC buys use Polyester's native all-in debit ceiling; the exchange resolves quantity with Fee and price protection included. Other limit buys reserve the larger current maker/taker Fee before calculating quantity at your limit price. Actual spending may be lower. A 10% sell sells 10% of the available token quantity, not 10% of the quote balance. The budget/quantity is fixed when entered and is not recalculated on confirmation. Percentages must be above 0 and at most 100; minimums, available liquidity and exchange validation still apply. Exact numeric amounts retain their existing meaning: trade value/quantity before Fee.
+- post-only GTC orders, fee-asset rules, per-order slippage tolerance, client reference price support in the API layer
+- attached take-profit, stop-loss, trailing stop, and OCO composition
+- standalone stop-loss, take-profit, trailing-stop, TWAP, and linear ladder triggers
+- clickable open/history orders with total, authoritative cumulative fill, remaining quantity, fill percentage, average price, and recent per-fill execution rows
+- confirmed single-order cancellation, dry-run + confirmation for cancel-all, trigger pause/resume/confirmed cancel
+- server `PreviewOrder` before every live order
+- one-time confirmations, expiry, exchange-aware precision/minimum validation, allowlisted Telegram chat/user IDs
+
+Regular orders ask for final confirmation by default. The final card has **Confirm**, **Discard order**, and **Disable future confirmations**. The last button disables the review screen for future orders; it does not submit the current order. You can also change this in **Configuration → Order confirmation**. When disabled, completing the amount and any required price/expiry submits the order immediately after validation. Market value can change and Fee still applies. Strategies retain their confirmation step. Confirmation and input-mode preferences survive restart and are stored per Telegram user, chat and API configuration; a different key/subaccount/mode defaults to confirmation ON and quote-value input.
+
+Buttons navigate within the card you clicked. Entering an amount, price or expiry receives a new reply below your input; the order result also arrives as a new message. Superseded order cards have their buttons removed. `/menu` and `/start` open a fresh terminal message. The market list refreshes every five seconds when prices change. Opening a pair only shows a loading state if data takes longer than 350 ms; slow display-only market data can appear as unavailable after three seconds, without weakening order validation.
+
+The local manager's **Recent logs** view on Windows and macOS formats events with timestamps, readable messages and severity colors (green/info, yellow/warning, red/error). It keeps errors and stack traces visible. The original structured log in `.runtime/bot.log` remains unchanged for diagnostics. SQLite's experimental-runtime advisory is condensed into a short note; it is not a bot failure. Redirected output and `NO_COLOR` use plain text.
+- stable client IDs persisted before submission and reconciliation of ambiguous order outcomes
+- paper mode, SQLite journal, structured secret-filtering logs, Docker deployment
+
+Batch market-making workflows, transfer/withdrawal operations, wallet login, and API-key administration are intentionally outside this Telegram terminal. Money movement requires a separate authority and should not share a trading bot key.
+
+## Verified and not yet verified
+
+Verified in this repository:
+
+- TypeScript strict compilation
+- unit tests for request signing, documented query canonicalization, exact decimal scaling, public-ID conversion, local risk rules, and single-use confirmation state
+- public testnet calls for catalog, market overview, order book, trades, and candles
+- dependency audit with zero known vulnerabilities at the recorded lock-file state
+
+Not yet verified:
+
+- authenticated testnet balance reads
+- authenticated preview/create/cancel and trigger mutations
+- complete Telegram end-to-end interaction with a real bot token
+
+Those checks require the operator's credentials and must be performed with the staged acceptance sequence in [Ubuntu/VPS guide](ubuntu-vps.md). Passing unit tests does not prove live exchange acceptance.
+
+## Local development
+
+Use a VS Code terminal with Node.js 22.13+, 24.x or 26+:
+
+```bash
+cd "Pink Terminal"
+npm ci
+npm run check
+npm run smoke:public
+cp .env.example .env
+npm run dev
+```
+
+Never paste real secrets into chat. Edit `.env` locally and keep it out of Git.
+
+## Configuration
+
+| Variable | Purpose |
+| --- | --- |
+| `TELEGRAM_BOT_TOKEN` | Private bot token |
+| `TELEGRAM_ALLOWED_CHAT_IDS` | Comma-separated controlling chat IDs |
+| `TELEGRAM_ALLOWED_USER_IDS` | Optional comma-separated controlling user IDs |
+| `POLYESTER_API_URL` | Defaults to the official testnet API |
+| `POLYESTER_API_KEY_ID` | Public Polyester API key identifier |
+| `POLYESTER_API_SECRET_HEX` | 32-byte Ed25519 secret seed in hex |
+| `POLYESTER_SUBACCOUNT_ID` | Optional numeric subaccount scope |
+| `TRADING_MODE` | `paper` uses simulated funds; `read_only` reads the real account and blocks every mutation; `live` enables signed mutations |
+There are no artificial local notional or execution caps. In `live` mode implemented operations use their confirmation step, except regular orders when you explicitly disable final confirmation in Configuration. Polyester account policy, balances, market metadata, and server preview remain authoritative.
+
+See [SECURITY.md](../SECURITY.md) before enabling live writes.
+
+## Architecture
+
+```text
+Telegram user
+      │ allowlist + one-time confirmation
+      ▼
+Telegram bot ──► deterministic risk guard ──► durable intent journal
+                                                    │
+                                                    ▼
+                                      Polyester ConnectRPC JSON API
+                                      Ed25519 signed private requests
+```
+
+Public market data requires no API key. Private reads and mutations use the exact serialized request body in the Polyester canonical signature. An uncertain mutation is recorded as unknown and reconciled by its previously persisted client ID; it is not sent again with a new ID.
+
+The live Telegram terminal uses bounded polling and edits one existing message. It is not a tick-by-tick WebSocket feed. `POLL_INTERVAL_MS` cannot be set below 10 seconds, which limits API and Telegram edit pressure. Order `cumQty`/`leavesQty` are used for fill status; individual execution-history rows can lag and are displayed as supplemental data only.
+
+## Upstream documentation
+
+- [Developer documentation](https://testnet.polyester.com/docs/developer-docs/getting-started)
+- [ConnectRPC getting started](https://testnet.polyester.com/docs/developer-docs/connectrpc/getting-started)
+- [Ed25519 API keys](https://testnet.polyester.com/docs/developer-docs/authentication-security)
+- [Client order IDs and idempotency](https://testnet.polyester.com/docs/developer-docs/shared-concepts/client-order-ids)
+- [Preview order](https://testnet.polyester.com/docs/developer-docs/shared-concepts/preview-order)
+- [Market order price protection](https://testnet.polyester.com/docs/developer-docs/shared-concepts/market-order-price-protection)
+- [Orders reference](https://testnet.polyester.com/docs/sdk/typescript/reference/orders)
+- [Triggers reference](https://testnet.polyester.com/docs/sdk/typescript/reference/triggers)
+
+Polyester is referenced solely to identify compatibility with the Polyester testnet. No rights are claimed in the Polyester name or related marks. This community project is not presented as an official client.
