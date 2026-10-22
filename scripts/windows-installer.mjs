@@ -136,9 +136,8 @@ function renderEnvironment(config) {
 
 async function showDisclaimer() {
   print(`${color.yellow}${color.bold}BEFORE YOU CONTINUE${color.reset}\n`);
-  print("This independent community client is for education and Polyester testnet testing.");
-  print("LIVE mode can create and cancel signed testnet orders. It is not an official");
-  print("Polyester product, is not financial advice, and is intended solely for testing.");
+  print("Pink Terminal is an independent community project, not an official Polyester product.");
+  print("LIVE mode can place and cancel signed testnet orders.");
   print("Use a dedicated API key with trading and balance permissions only — transfers");
   print("and withdrawals are not currently supported.\n");
   print(`  ${color.green}1)${color.reset} I have read this and want to continue`);

@@ -36,8 +36,8 @@ describe("installation lifecycle guards", () => {
     const run = vi.fn();
     stopBeforeInstall(root, source, run);
     expect(run).toHaveBeenCalledWith(process.execPath, [path.join(source, "scripts", "local-manager.mjs"), "stop"], "Stop before update", { inherit: true });
-    run.mockImplementation(() => { throw new Error("Unverified process"); });
-    expect(() => stopBeforeInstall(root, source, run)).toThrow("Unverified process");
+    run.mockImplementation(() => { throw new Error("Process control unavailable"); });
+    expect(() => stopBeforeInstall(root, source, run)).toThrow("Process control unavailable");
   });
   it("does not start a manager for a fresh installation", () => {
     const root = mkdtempSync(path.join(tmpdir(), "pink-install-guard-")); roots.push(root);

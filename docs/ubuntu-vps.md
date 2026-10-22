@@ -10,9 +10,13 @@ Run the one-line installer from the project README:
 curl -fsSL https://raw.githubusercontent.com/web3cadet/pink-terminal/main/install.sh | bash -s -- --repo https://github.com/web3cadet/pink-terminal.git
 ```
 
-The wizard installs the required components, stores `.env` with owner-only permissions, never prints secret inputs, and lets you select live, read-only, or paper mode. Use `./manage.sh` afterward for lifecycle management.
+The wizard installs the required components, stores `.env` with owner-only permissions, configures live testnet mode and starts the bot. Use `./manage.sh` afterward for lifecycle management.
 
-## 1. Prepare the server
+## Manual installation
+
+Use the steps below instead of the guided installer if you prefer to manage the Docker deployment yourself.
+
+### 1. Prepare the server
 
 ```bash
 sudo apt update
@@ -30,12 +34,13 @@ timedatectl status
 sudo timedatectl set-ntp true
 ```
 
-## 2. Copy the project
+### 2. Copy the project
 
-Clone the repository or upload the `Pink Terminal` folder, then enter it:
+Clone the repository and enter it:
 
 ```bash
-cd "Pink Terminal"
+git clone https://github.com/web3cadet/pink-terminal.git
+cd pink-terminal
 cp .env.example .env
 chmod 600 .env
 nano .env
@@ -51,7 +56,7 @@ Required values:
 
 Set `TRADING_MODE` to the mode you want: `paper` for simulated orders, `read_only` for account data without mutations, or `live` for testnet orders and strategies.
 
-## 3. Create a restricted Polyester key
+### 3. Create a restricted Polyester key
 
 In Polyester testnet, create a dedicated API key and policy with:
 
@@ -61,7 +66,7 @@ In Polyester testnet, create a dedicated API key and policy with:
 
 Do not grant withdrawals or transfers. Restrict it to the required markets, add an expiry, and add the VPS public address as a `/32` IP allowlist when possible.
 
-## 4. Build and start
+### 4. Build and start
 
 ```bash
 docker compose build
@@ -72,7 +77,7 @@ docker compose logs --tail=100 bot
 
 The container makes outbound connections only; no inbound application port is required.
 
-## 5. Backup and update
+### 5. Backup and update
 
 The SQLite journal is stored under `./data`. Stop the container before a simple file backup:
 
@@ -82,7 +87,7 @@ tar -czf "polyester-bot-data-$(date +%F).tar.gz" data
 docker compose start bot
 ```
 
-Update only after reading changes and rerunning checks:
+To update a manual installation:
 
 ```bash
 git pull --ff-only

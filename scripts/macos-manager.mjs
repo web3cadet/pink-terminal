@@ -19,7 +19,7 @@ function link() {
 }
 async function status() {
   const state = await bot.state();
-  console.log(state.running ? `${state.ready ? "\x1b[32mRUNNING\x1b[0m" : "STARTING · Telegram readiness not confirmed"} · PID ${state.pid}` : state.unverified ? "UNVERIFIED · inspect the existing process" : "STOPPED");
+  console.log(state.running ? `${state.ready ? "\x1b[32mRUNNING\x1b[0m" : "STARTING · Telegram readiness not confirmed"} · PID ${state.pid}` : state.controlUnavailable ? "PROCESS FOUND · control channel unavailable" : "STOPPED");
   link();
 }
 async function command(action) {

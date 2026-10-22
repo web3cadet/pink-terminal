@@ -96,7 +96,7 @@ describe("local runtimes", () => {
       expect(run("status").stdout).toContain("STOPPED");
     } finally { run("stop"); await cleanupFixture(root); }
   }, 20000);
-  it.skipIf(process.platform !== "win32")("preserves corrupt or unverified Windows state", async () => {
+  it.skipIf(process.platform !== "win32")("preserves corrupt or uncontrolled Windows state", async () => {
     const root = fixture();
     const run = (action: string) => spawnSync(process.execPath, [path.join(root, "scripts/local-manager.mjs"), action], { cwd: root, encoding: "utf8", timeout: 15000 });
     try {

@@ -49,7 +49,7 @@ The wizard installs prerequisites, checks API access and starts the bot in Docke
 
 Open the bot link shown after installation and send `/start`. Use the buttons to trade, view balances and manage orders. Send `/menu` to open a fresh terminal message.
 
-Use **live** mode for testnet orders and strategies. The installation access check uses a non-mutating preview and does not place an order.
+The guided installer configures **live testnet trading**. Its access check uses a non-mutating preview and does not place an order.
 
 ## Manage your bot
 

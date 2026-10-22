@@ -47,7 +47,7 @@ describe("local update workflow", () => {
   });
   it("does not replace files if shutdown cannot be verified", async () => {
     const run = vi.fn();
-    await expect(updateInstallation(fixture(), { ask: async () => "y", stop: async () => { throw new Error("Unverified process"); }, run, print: () => {} })).rejects.toThrow("Unverified process");
+    await expect(updateInstallation(fixture(), { ask: async () => "y", stop: async () => { throw new Error("Process control unavailable"); }, run, print: () => {} })).rejects.toThrow("Process control unavailable");
     expect(run).not.toHaveBeenCalled();
   });
   it("reports a failed installer without claiming success", async () => {

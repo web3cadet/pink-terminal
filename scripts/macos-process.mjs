@@ -55,7 +55,7 @@ export class MacProcess {
     }
     const pidAlive = alive(state.pid);
     const running = pidAlive && await control(state, "ping");
-    return { ...state, running, ready: running && await control(state, "ready"), unverified: pidAlive && !running };
+    return { ...state, running, ready: running && await control(state, "ready"), controlUnavailable: pidAlive && !running };
   }
   logs() {
     return existsSync(this.logFile) ? readFileSync(this.logFile, "utf8").split(/\r?\n/).slice(-80).join("\n").trim() : "No logs yet.";
@@ -71,7 +71,7 @@ export class MacProcess {
       if (!state.ready) throw new Error("The process is running but Telegram readiness is not confirmed. Inspect Status and Logs; stop it before restarting.");
       return state;
     }
-    if (state.unverified) throw new Error("An existing process could not be verified; refusing a duplicate launch.");
+    if (state.controlUnavailable) throw new Error("An existing process is running without a valid control channel; refusing a duplicate launch.");
     if (!existsSync(path.join(this.root, ".env"))) throw new Error("Configuration missing. Run npm run setup:local.");
     if (!existsSync(path.join(this.root, "dist", "index.js"))) throw new Error("Build missing. Run npm run build.");
     await rm(this.stateFile, { force: true });
@@ -104,9 +104,9 @@ export class MacProcess {
     if (state.running && !await control(state, "stop") && alive(pid)) {
       throw new Error("The bot did not acknowledge Stop. No PID was force-killed.");
     }
-    // An unresponsive process may already be exiting. Wait, but never signal an unverified PID.
+    // An unresponsive process may already be exiting. Wait, but never signal a PID without a valid control channel.
     if (!await waitForProcessExit(pid, { tracked })) {
-      throw new Error("Shutdown has not completed or process ownership could not be verified. Runtime state preserved; no PID was force-killed.");
+      throw new Error("Shutdown has not completed or the control channel is unavailable. Runtime state was preserved; no PID was force-killed.");
     }
     await rm(this.stateFile, { force: true });
   }

@@ -102,7 +102,7 @@ async function startBot() {
     if (botLink()) print(`${color.cyan}${botLink()}${color.reset}`);
     return;
   }
-  if (isRunning(Number(state.pid))) fail("An existing process could not be verified; refusing a duplicate launch.");
+  if (isRunning(Number(state.pid))) fail("An existing process is running without a valid control channel; refusing a duplicate launch.");
   if (!existsSync(ENV_FILE)) fail("Configuration is missing. Run npm run setup:windows first.");
   if (!existsSync(ENTRY_FILE)) fail("Build is missing. Run npm run build first.");
 
@@ -148,7 +148,7 @@ async function startBot() {
 async function stopBot({ quiet = false } = {}) {
   const state = await currentState();
   if (!state.running) {
-    if (!await waitForProcessExit(state.pid)) fail("A process still exists but its control channel could not be verified. No process was killed; runtime state was preserved.");
+    if (!await waitForProcessExit(state.pid)) fail("A process still exists but its control channel is unavailable. No process was killed; runtime state was preserved.");
     await rm(STATE_FILE, { force: true });
     if (!quiet) print(`${color.yellow}Already stopped.${color.reset}`);
     return;
@@ -186,7 +186,7 @@ async function restartBot() {
 async function showStatus() {
   const state = await currentState();
   if (state.running) print(`Status: ${state.ready ? `${color.green}${color.bold}RUNNING${color.reset}` : "STARTING · Telegram readiness not confirmed"} · PID ${state.pid}`);
-  else if (isRunning(Number(state.pid))) print("Status: UNVERIFIED · process exists, control channel unavailable");
+  else if (isRunning(Number(state.pid))) print("Status: PROCESS FOUND · control channel unavailable");
   else print(`Status: ${color.red}${color.bold}STOPPED${color.reset}${state.stale ? ` ${color.dim}(stale state cleaned on next start)${color.reset}` : ""}`);
   if (state.startedAt) print(`Last start: ${state.startedAt}`);
   if (botLink()) print(`Telegram: ${color.cyan}${botLink()}${color.reset}`);

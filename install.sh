@@ -228,9 +228,8 @@ choose() {
 show_disclaimer() {
   say "${YELLOW}${BOLD}Before you continue${RESET}"
   say ""
-  say "This independent community client is for education and Polyester testnet testing."
-  say "LIVE mode can create and cancel signed testnet orders. It is not an official"
-  say "Polyester product, is not financial advice, and is intended solely for testing."
+  say "Pink Terminal is an independent community project, not an official Polyester product."
+  say "LIVE mode can place and cancel signed testnet orders."
   say "Use a dedicated API key with trading and balance permissions only — transfers"
   say "and withdrawals are not currently supported."
   say ""

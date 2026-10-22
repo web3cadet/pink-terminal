@@ -55,9 +55,9 @@ export function renderAccessReport(report: AccessReport, readOnly = false): stri
     "\n\x1b[1mAPI ACCESS CHECK\x1b[0m",
     row("Balances - Read", report.balances),
     row(`Spot trading - ${readOnly ? "Read" : "Write"}`, report.trading),
-    `${gray}— Transfers - None (recommended; not checked)${reset}`,
-    `${gray}— Withdrawals - None (recommended; not checked)${reset}`,
-    readOnly ? "Read-only mode; order placement is not checked." : "Trading is checked with a preview on one market; no order is placed.",
+    `${gray}— Transfers - None (recommended)${reset}`,
+    `${gray}— Withdrawals - None (recommended)${reset}`,
+    readOnly ? "Read-only mode: order placement is disabled." : "Trading access uses a non-mutating preview; no order is placed.",
     report.ok ? `${green}Access check passed.${reset}` : "\nPlease check your API permissions and credentials."
   ].join("\n");
 }

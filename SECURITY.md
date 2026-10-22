@@ -5,7 +5,7 @@ This bot signs trading requests and must be treated as a security-sensitive appl
 ## Credential rules
 
 - Never send a Telegram bot token, Polyester key ID, or Ed25519 secret through Telegram, Discord, an issue, a commit, or a screenshot.
-- Put secrets only in the server-side `.env` file. The repository ignores that file.
+- Put secrets only in the local `.env` file. The repository ignores that file.
 - The Windows installer restricts `.env` to the installing Windows account, SYSTEM and administrators. That account can still open, edit and delete it normally, without an extra password. This does not protect against malware running as that user or an administrator. On macOS and Ubuntu, use owner-only file permissions.
 - Create a dedicated Polyester testnet API key. Grant only `read-balances`, `read-spot`, and `trade-spot`.
 - Do not grant withdrawal, internal-transfer, address-book, or account-administration permissions.
@@ -25,8 +25,10 @@ This bot signs trading requests and must be treated as a security-sensitive appl
 - Cancellation requires explicit confirmation in writable mode. Strategy pause/resume remain single-click operations with the same owner, configuration, expiry and one-time checks.
 - Logs deliberately drop fields whose names look like tokens, secrets, signatures, authorization headers, or cookies.
 
-## Production hardening
+## VPS security
 
-Use a private VPS account, automatic security updates, SSH keys, a firewall, NTP, encrypted backups, and a secret manager where practical. Make `.env` readable only by the service user. Do not expose an inbound web port: the bot uses Telegram long polling.
+For a VPS deployment, use a dedicated system user, automatic security updates, SSH keys, a firewall, NTP and encrypted backups. Make `.env` readable only by that user. Do not expose an inbound web port: the bot uses Telegram long polling.
 
 This repository is testnet software. Do not point it at mainnet until Polyester confirms the contracts and a separate security review has been completed.
+
+Pink Terminal provides trading tools and does not provide trading recommendations.

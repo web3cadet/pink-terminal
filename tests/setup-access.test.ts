@@ -24,7 +24,7 @@ describe("setup access checks", () => {
     const output = renderAccessReport(report);
     expect(output).toContain("✓ Balances - Read");
     expect(output).toContain("✓ Spot trading - Write");
-    expect(output).toContain("— Transfers - None (recommended; not checked)");
+    expect(output).toContain("— Transfers - None (recommended)");
     expect(api.preview).toHaveBeenCalledOnce();
   });
   it("distinguishes bad signature from missing permissions and hides server messages", async () => {
