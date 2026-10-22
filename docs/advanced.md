@@ -88,13 +88,13 @@ Choose **Update from GitHub** in the menu or run `npm run bot:update`. After con
 
 Use `npm run bot:configure` to change credentials, or `npm run bot:restart` for an ordinary restart or after editing `.env`. Local operation requires an awake, online computer. Start the bot again after logout or reboot. The manager does not register a login service.
 
-macOS support is beta. Windows keeps its existing background runner; macOS uses a separate runner with an authenticated localhost control channel. Both expose the same npm management commands. The `.github/workflows/platform-checks.yml` workflow checks Windows, Ubuntu, macOS Apple Silicon and macOS Intel; a prepared workflow is not evidence of a completed run. A manual macOS setup with real Telegram/Polyester credentials is still required before removing the beta label.
+macOS support is beta. Windows keeps its existing background runner; macOS uses a separate runner with an authenticated localhost control channel. Both expose the same npm management commands.
 
-The local manager waits for Telegram initialization before reporting a successful start. If readiness is not confirmed, check Status and Logs; runtime state is retained so the process can still be stopped. This startup check is not a guarantee of continued network connectivity or successful trading.
+The local manager waits for Telegram initialization before reporting a successful start. If readiness is not confirmed, check Status and Logs; runtime state is retained so the process can still be stopped.
 
 Replacing the API credentials, endpoint, subaccount or trading mode invalidates pending confirmations and control buttons. Refresh Orders or Strategies to get current buttons. Account switching is not prohibited: local history and statistics remain in the existing database and are not separated by API account. Previously submitted exchange orders and strategies are not cancelled by configuration changes.
 
-If the API access check fails, the installer stays open: press Enter to recheck after updating permissions, or choose 2 to replace only the API Key ID and private seed. Telegram settings are kept. Signature errors are shown separately from permission errors. Transfers and withdrawals are listed as recommended None settings, not as verified permissions. The trading check uses an order preview and places no order.
+If the API access check fails, the installer stays open: press Enter to recheck after updating permissions, or choose 2 to replace only the API Key ID and private seed. Telegram settings are kept. Signature errors are shown separately from permission errors. Transfers and withdrawals are listed as recommended None settings. The trading access check uses an order preview and places no order.
 
 Use `npm run bot:uninstall` for confirmed removal of a local installed copy, backing up `.env` outside the removed folder. The command deletes local history and logs but does not cancel exchange orders or strategies. It refuses source Git checkouts and unrelated top-level files.
 
@@ -124,23 +124,6 @@ The local manager's **Recent logs** view on Windows and macOS formats events wit
 - paper mode, SQLite journal, structured secret-filtering logs, Docker deployment
 
 Batch market-making workflows, transfer/withdrawal operations, wallet login, and API-key administration are intentionally outside this Telegram terminal. Money movement requires a separate authority and should not share a trading bot key.
-
-## Verified and not yet verified
-
-Verified in this repository:
-
-- TypeScript strict compilation
-- unit tests for request signing, documented query canonicalization, exact decimal scaling, public-ID conversion, local risk rules, and single-use confirmation state
-- public testnet calls for catalog, market overview, order book, trades, and candles
-- dependency audit with zero known vulnerabilities at the recorded lock-file state
-
-Not yet verified:
-
-- authenticated testnet balance reads
-- authenticated preview/create/cancel and trigger mutations
-- complete Telegram end-to-end interaction with a real bot token
-
-Those checks require the operator's credentials and must be performed with the staged acceptance sequence in [Ubuntu/VPS guide](ubuntu-vps.md). Passing unit tests does not prove live exchange acceptance.
 
 ## Local development
 

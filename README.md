@@ -49,7 +49,7 @@ The wizard installs prerequisites, checks API access and starts the bot in Docke
 
 Open the bot link shown after installation and send `/start`. Use the buttons to trade, view balances and manage orders. Send `/menu` to open a fresh terminal message.
 
-The installer enables **live testnet trading**. Its access check does not place an order.
+Use **live** mode for testnet orders and strategies. The installation access check uses a non-mutating preview and does not place an order.
 
 ## Manage your bot
 
@@ -76,7 +76,7 @@ Updates preserve credentials and local data, but replace application code. Unins
 - Regular orders require confirmation by default. Disabling **Configuration → Order confirmation** allows submission immediately after entering the required details. Strategies still require confirmation.
 - Stopping, uninstalling or reconfiguring the bot does **not** cancel orders or strategies already submitted to Polyester.
 - Use a separate installation for a separate account if you need separate local history and statistics.
-- This release is for testnet only. macOS remains Beta; automated checks are not a guarantee of live trading behavior.
+- This release is for Polyester testnet only. macOS remains Beta.
 
 ## More information
 

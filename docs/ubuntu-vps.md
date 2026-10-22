@@ -4,13 +4,13 @@ The commands below are Bash commands for an Ubuntu VPS. Docker Compose is the re
 
 ## Guided installation
 
-The interactive installer performs the dependency, configuration, credential-readiness, build, and startup stages below:
+Run the one-line installer from the project README:
 
 ```bash
-bash install.sh
+curl -fsSL https://raw.githubusercontent.com/web3cadet/pink-terminal/main/install.sh | bash -s -- --repo https://github.com/web3cadet/pink-terminal.git
 ```
 
-Once the repository is public, use the one-line command from the project README. The wizard stores its `.env` with owner-only permissions, never prints secret inputs, and requires explicit selection of live, read-only, or paper mode. Use `./manage.sh` afterward for lifecycle management.
+The wizard installs the required components, stores `.env` with owner-only permissions, never prints secret inputs, and lets you select live, read-only, or paper mode. Use `./manage.sh` afterward for lifecycle management.
 
 ## 1. Prepare the server
 
@@ -49,7 +49,7 @@ Required values:
 - `POLYESTER_API_KEY_ID`: the public `ak_...` key identifier.
 - `POLYESTER_API_SECRET_HEX`: the 32-byte Ed25519 private seed in hex. Keep it only on this server.
 
-Start with `TRADING_MODE=paper`. The bot can display public market data immediately; private balances need the read permissions described below.
+Set `TRADING_MODE` to the mode you want: `paper` for simulated orders, `read_only` for account data without mutations, or `live` for testnet orders and strategies.
 
 ## 3. Create a restricted Polyester key
 
@@ -72,26 +72,7 @@ docker compose logs --tail=100 bot
 
 The container makes outbound connections only; no inbound application port is required.
 
-## 5. Acceptance sequence
-
-Do not switch directly from installation to unrestricted writes.
-
-1. Keep `TRADING_MODE=paper`.
-2. Open `/start`, inspect every market page, balances, order wizard, and all five trigger wizards.
-3. Verify that malformed quantities and prices are rejected and that Polyester preview handles account and market constraints.
-4. Confirm that a Telegram account outside both allowlists cannot use the bot.
-5. Change `TRADING_MODE=live`, rebuild, and submit one deliberately small testnet order.
-6. Verify the final order state under Orders; an admission acknowledgement is not a fill.
-7. Test strategies only after normal order placement and cancellation are confirmed.
-
-After changing `.env`:
-
-```bash
-docker compose up -d --build
-docker compose logs --tail=100 bot
-```
-
-## 6. Backup and update
+## 5. Backup and update
 
 The SQLite journal is stored under `./data`. Stop the container before a simple file backup:
 
